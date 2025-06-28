@@ -1,0 +1,19 @@
+<lint-module
+    format="1"
+    dir="/Users/syedmeesumali/Downloads/telemetry_android_lib/telemetry"
+    name=":telemetry"
+    type="LIBRARY"
+    maven="telemetry_android_lib:telemetry:"
+    agpVersion="8.3.0"
+    buildFolder="build"
+    bootClassPath="/Users/syedmeesumali/Library/Android/sdk/platforms/android-34/android.jar:/Users/syedmeesumali/Library/Android/sdk/build-tools/34.0.0/core-lambda-stubs.jar"
+    javaSourceLevel="21"
+    compileTarget="android-34"
+    neverShrinking="true">
+  <lintOptions
+      abortOnError="true"
+      absolutePaths="true"
+      checkReleaseBuilds="true"
+      explainIssues="true"/>
+  <variant name="debug"/>
+</lint-module>

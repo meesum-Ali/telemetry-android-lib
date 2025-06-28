@@ -1,0 +1,14 @@
+com.bazaar.telemetry-jetified-annotation-experimental-1.4.0-0 /Users/syedmeesumali/.gradle/caches/transforms-4/1de5e8aac915ac42b2af0050cfb62fef/transformed/jetified-annotation-experimental-1.4.0/res
+com.bazaar.telemetry-lifecycle-runtime-2.6.2-1 /Users/syedmeesumali/.gradle/caches/transforms-4/23864262e8957067dd5c497367732e66/transformed/lifecycle-runtime-2.6.2/res
+com.bazaar.telemetry-jetified-profileinstaller-1.3.0-2 /Users/syedmeesumali/.gradle/caches/transforms-4/46f194933bc69cd89107ec24c2bc95b4/transformed/jetified-profileinstaller-1.3.0/res
+com.bazaar.telemetry-core-1.13.1-3 /Users/syedmeesumali/.gradle/caches/transforms-4/55c0ae307f88f23e5d7cfd8199694d2c/transformed/core-1.13.1/res
+com.bazaar.telemetry-jetified-startup-runtime-1.1.1-4 /Users/syedmeesumali/.gradle/caches/transforms-4/91b4789b870a52244310f53e6bdd3e5e/transformed/jetified-startup-runtime-1.1.1/res
+com.bazaar.telemetry-jetified-core-ktx-1.13.1-5 /Users/syedmeesumali/.gradle/caches/transforms-4/b342e16a713759e3b27903d53c9dc154/transformed/jetified-core-ktx-1.13.1/res
+com.bazaar.telemetry-core-runtime-2.2.0-6 /Users/syedmeesumali/.gradle/caches/transforms-4/d9c00cb826bb1432d45b35e8923d3244/transformed/core-runtime-2.2.0/res
+com.bazaar.telemetry-pngs-7 /Users/syedmeesumali/Downloads/telemetry_android_lib/telemetry/build/generated/res/pngs/release
+com.bazaar.telemetry-resValues-8 /Users/syedmeesumali/Downloads/telemetry_android_lib/telemetry/build/generated/res/resValues/release
+com.bazaar.telemetry-mergeReleaseResources-9 /Users/syedmeesumali/Downloads/telemetry_android_lib/telemetry/build/intermediates/incremental/release/mergeReleaseResources/merged.dir
+com.bazaar.telemetry-mergeReleaseResources-10 /Users/syedmeesumali/Downloads/telemetry_android_lib/telemetry/build/intermediates/incremental/release/mergeReleaseResources/stripped.dir
+com.bazaar.telemetry-release-11 /Users/syedmeesumali/Downloads/telemetry_android_lib/telemetry/build/intermediates/merged_res/release/mergeReleaseResources
+com.bazaar.telemetry-main-12 /Users/syedmeesumali/Downloads/telemetry_android_lib/telemetry/src/main/res
+com.bazaar.telemetry-release-13 /Users/syedmeesumali/Downloads/telemetry_android_lib/telemetry/src/release/res

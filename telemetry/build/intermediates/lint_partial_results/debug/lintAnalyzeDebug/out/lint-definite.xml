@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.3.0" type="incidents">
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of io.opentelemetry:opentelemetry-bom than 1.37.0 is available: 1.49.0">
+        <fix-replace
+            description="Change to 1.49.0"
+            family="Update versions"
+            oldString="1.37.0"
+            replacement="1.49.0"/>
+        <location
+            file="${:telemetry*projectDir}/build.gradle.kts"
+            line="26"
+            column="20"
+            startOffset="603"
+            endLine="26"
+            endColumn="73"
+            endOffset="656"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of androidx.core:core-ktx than 1.13.1 is available: 1.16.0">
+        <fix-replace
+            description="Change to 1.16.0"
+            family="Update versions"
+            oldString="1.13.1"
+            replacement="1.16.0"/>
+        <location
+            file="${:telemetry*projectDir}/build.gradle.kts"
+            line="34"
+            column="21"
+            startOffset="927"
+            endLine="34"
+            endColumn="50"
+            endOffset="956"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of org.jetbrains.kotlinx:kotlinx-coroutines-android than 1.8.1 is available: 1.10.2">
+        <fix-replace
+            description="Change to 1.10.2"
+            family="Update versions"
+            oldString="1.8.1"
+            replacement="1.10.2"/>
+        <location
+            file="${:telemetry*projectDir}/build.gradle.kts"
+            line="35"
+            column="21"
+            startOffset="979"
+            endLine="35"
+            endColumn="75"
+            endOffset="1033"/>
+    </incident>
+
+    <incident
+        id="GradleDependency"
+        severity="warning"
+        message="A newer version of org.jetbrains.kotlinx:kotlinx-serialization-json than 1.7.0 is available: 1.8.1">
+        <fix-replace
+            description="Change to 1.8.1"
+            family="Update versions"
+            oldString="1.7.0"
+            replacement="1.8.1"/>
+        <location
+            file="${:telemetry*projectDir}/build.gradle.kts"
+            line="36"
+            column="21"
+            startOffset="1056"
+            endLine="36"
+            endColumn="75"
+            endOffset="1110"/>
+    </incident>
+
+</incidents>
