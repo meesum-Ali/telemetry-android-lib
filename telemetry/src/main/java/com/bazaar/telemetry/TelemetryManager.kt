@@ -125,7 +125,9 @@ object TelemetryManager : TelemetryService {
             .setUnit("1")
             .build()
 
-        Log.i("TelemetryManager", "OpenTelemetry initialized → $otlpEndpoint")
+        Log.i("TelemetryManager", "OpenTelemetry initialized. Service: $serviceName, Version: $serviceVersion, Env: $environment")
+        Log.i("TelemetryManager", "Metrics OTLP endpoint: $otlpEndpoint, Export interval: 30s")
+        Log.i("TelemetryManager", "Traces/Logs OTLP endpoint: $otlpEndpoint")
     }
 
     /**
@@ -133,15 +135,22 @@ object TelemetryManager : TelemetryService {
      */
     override fun setCommonAttributes(attrs: Attributes) {
         commonAttributes = attrs
+        Log.d("TelemetryManager", "Setting common attributes: ${attrs.toOtelAttributes()}")
     }
 
     /**
      * Force flush and shutdown all SDK providers
      */
     override fun shutdown() {
+        Log.i("TelemetryManager", "Shutting down TelemetryManager...")
+        Log.d("TelemetryManager", "Shutting down TracerProvider.")
         tracerProvider.shutdown()
+        Log.d("TelemetryManager", "Shutting down MeterProvider.")
         meterProvider.shutdown()
+        Log.d("TelemetryManager", "Shutting down LoggerProvider.")
         loggerProvider.shutdown()
+        Log.i("TelemetryManager", "TelemetryManager shutdown complete.")
+
     }
 
     override fun <T> span(
@@ -192,6 +201,7 @@ object TelemetryManager : TelemetryService {
     ) {
         val mergedAttrs = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
         val otelAttrs = mergedAttrs.toOtelAttributes()
+        Log.d("TelemetryManager", "incRequestCount called. Amount: $amount, Attributes: $otelAttrs, Common Attributes: ${commonAttributes.toOtelAttributes()}")
         requestCounter.add(amount, otelAttrs)
     }
 }
