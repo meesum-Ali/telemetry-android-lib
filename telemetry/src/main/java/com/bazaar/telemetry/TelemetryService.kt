@@ -28,7 +28,8 @@ interface TelemetryService {
     fun log(
         level: LogLevel,
         message: String,
-        attrs: Attributes = Attributes.empty()
+        attrs: Attributes = Attributes.empty(),
+        throwable: Throwable? = null
     )
 
     fun incRequestCount(
