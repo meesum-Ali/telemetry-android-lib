@@ -3,10 +3,12 @@ package com.bazaar.telemetry
 import android.app.Application
 import android.os.Build
 import android.util.Log
+import android.os.Process
 import androidx.annotation.RequiresApi
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.logs.LogRecordBuilder
 import io.opentelemetry.api.trace.Tracer
+import io.opentelemetry.api.metrics.ObservableLongGauge
 import io.opentelemetry.context.Scope
 import io.opentelemetry.exporter.otlp.logs.OtlpGrpcLogRecordExporter
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter
@@ -44,6 +46,10 @@ object TelemetryManager : TelemetryService {
 
     // Attributes to apply globally to every span/log/metric
     private var commonAttributes: Attributes = Attributes.empty()
+
+    private var memoryUsageGauge: ObservableLongGauge? = null
+    private var cpuTimeGauge: ObservableLongGauge? = null
+    private var defaultExceptionHandler: Thread.UncaughtExceptionHandler? = null
 
     @RequiresApi(Build.VERSION_CODES.O)
     override fun init(
@@ -125,6 +131,37 @@ object TelemetryManager : TelemetryService {
             .setUnit("1")
             .build()
 
+        // Setup gauges for app vitals
+        memoryUsageGauge = meter.gaugeBuilder("app_memory_usage_bytes")
+            .ofLongs()
+            .setDescription("Memory used by the app in bytes")
+            .setUnit("By")
+            .buildWithCallback { measurement ->
+                val runtime = Runtime.getRuntime()
+                val used = runtime.totalMemory() - runtime.freeMemory()
+                measurement.record(used)
+            }
+
+        cpuTimeGauge = meter.gaugeBuilder("app_cpu_time_ms")
+            .ofLongs()
+            .setDescription("CPU time used by the app in ms")
+            .setUnit("ms")
+            .buildWithCallback { measurement ->
+                measurement.record(Process.getElapsedCpuTime())
+            }
+
+        // Install crash handler
+        defaultExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            log(
+                level = TelemetryService.LogLevel.ERROR,
+                message = "Unhandled exception",
+                attrs = Attributes.builder().put("thread.name", t.name).build(),
+                throwable = e
+            )
+            defaultExceptionHandler?.uncaughtException(t, e)
+        }
+
         Log.i("TelemetryManager", "OpenTelemetry initialized. Service: $serviceName, Version: $serviceVersion, Env: $environment")
         Log.i("TelemetryManager", "Metrics OTLP endpoint: $otlpEndpoint, Export interval: 30s")
         Log.i("TelemetryManager", "Traces/Logs OTLP endpoint: $otlpEndpoint")
@@ -143,6 +180,9 @@ object TelemetryManager : TelemetryService {
      */
     override fun shutdown() {
         Log.i("TelemetryManager", "Shutting down TelemetryManager...")
+        Thread.setDefaultUncaughtExceptionHandler(defaultExceptionHandler)
+        memoryUsageGauge?.close()
+        cpuTimeGauge?.close()
         Log.d("TelemetryManager", "Shutting down TracerProvider.")
         tracerProvider.shutdown()
         Log.d("TelemetryManager", "Shutting down MeterProvider.")
@@ -179,13 +219,19 @@ object TelemetryManager : TelemetryService {
     override fun log(
         level: TelemetryService.LogLevel,
         message: String,
-        attrs: Attributes
+        attrs: Attributes,
+        throwable: Throwable?
     ) {
         val mergedAttrs = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
         val otelAttrs = mergedAttrs.toOtelAttributes()
         val record: LogRecordBuilder = logger.logRecordBuilder()
             .setBody(message)
             .setAllAttributes(otelAttrs)
+        if (throwable != null) {
+            record.setAttribute(AttributeKey.stringKey("exception.type"), throwable.javaClass.name)
+            record.setAttribute(AttributeKey.stringKey("exception.message"), throwable.message ?: "")
+            record.setAttribute(AttributeKey.stringKey("exception.stacktrace"), Log.getStackTraceString(throwable))
+        }
         when (level) {
             TelemetryService.LogLevel.DEBUG -> record.setSeverity(io.opentelemetry.api.logs.Severity.DEBUG)
             TelemetryService.LogLevel.INFO -> record.setSeverity(io.opentelemetry.api.logs.Severity.INFO)
