@@ -11,6 +11,8 @@ pluginManagement {
         id("com.android.library")                     version "8.3.1"
         kotlin("android")                             version "1.9.23"
         id("org.jetbrains.kotlin.plugin.serialization") version "1.9.23"
+        id("org.jetbrains.dokka")                     version "1.9.20" // Added for KDoc/Javadoc generation
+        id("io.github.gradle-nexus.publish-plugin")   version "2.0.0" // Added for Sonatype publishing
     }
 }
 
