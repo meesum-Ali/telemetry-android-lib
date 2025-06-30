@@ -8,7 +8,7 @@ A lightweight Android library that provides a simple wrapper around OpenTelemetr
 - 📊 **Tracing**: Distributed tracing with OpenTelemetry
 - 📈 **Metrics**: Built-in metrics collection
 - 📝 **Structured Logging**: Log collection with different severity levels
-- 📊 **App Vitals**: Memory and CPU usage exported automatically
+- 📊 **App Vitals**: Memory, CPU, battery, thread count and uptime exported automatically
 - 🛑 **Crash Reporting**: Uncaught exceptions are logged
 - 🚀 **Easy Integration**: Simple setup and initialization
 - 🔌 **Grafana LGTM Ready**: Pre-configured for Grafana's observability stack

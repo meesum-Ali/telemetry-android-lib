@@ -4,6 +4,8 @@ import android.app.Application
 import android.os.Build
 import android.util.Log
 import android.os.Process
+import android.content.Context
+import android.os.BatteryManager
 import androidx.annotation.RequiresApi
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.logs.LogRecordBuilder
@@ -49,6 +51,10 @@ object TelemetryManager : TelemetryService {
 
     private var memoryUsageGauge: ObservableLongGauge? = null
     private var cpuTimeGauge: ObservableLongGauge? = null
+    private var uptimeGauge: ObservableLongGauge? = null
+    private var batteryLevelGauge: ObservableLongGauge? = null
+    private var threadCountGauge: ObservableLongGauge? = null
+    private var appStartTimeMs: Long = 0
     private var defaultExceptionHandler: Thread.UncaughtExceptionHandler? = null
 
     @RequiresApi(Build.VERSION_CODES.O)
@@ -62,6 +68,7 @@ object TelemetryManager : TelemetryService {
     ) {
         if (initialized) return
         initialized = true
+        appStartTimeMs = System.currentTimeMillis()
 
         // Build resource with global service attributes
         val resource = Resource.getDefault().merge(
@@ -150,6 +157,34 @@ object TelemetryManager : TelemetryService {
                 measurement.record(Process.getElapsedCpuTime())
             }
 
+        uptimeGauge = meter.gaugeBuilder("app_uptime_ms")
+            .ofLongs()
+            .setDescription("App uptime in ms")
+            .setUnit("ms")
+            .buildWithCallback { measurement ->
+                measurement.record(System.currentTimeMillis() - appStartTimeMs)
+            }
+
+        batteryLevelGauge = meter.gaugeBuilder("device_battery_percent")
+            .ofLongs()
+            .setDescription("Device battery level percentage")
+            .setUnit("1")
+            .buildWithCallback { measurement ->
+                val bm = application.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+                if (bm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+                    if (level >= 0) measurement.record(level.toLong())
+                }
+            }
+
+        threadCountGauge = meter.gaugeBuilder("app_thread_count")
+            .ofLongs()
+            .setDescription("Number of active threads in the app")
+            .setUnit("1")
+            .buildWithCallback { measurement ->
+                measurement.record(Thread.activeCount().toLong())
+            }
+
         // Install crash handler
         defaultExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
@@ -183,6 +218,9 @@ object TelemetryManager : TelemetryService {
         Thread.setDefaultUncaughtExceptionHandler(defaultExceptionHandler)
         memoryUsageGauge?.close()
         cpuTimeGauge?.close()
+        uptimeGauge?.close()
+        batteryLevelGauge?.close()
+        threadCountGauge?.close()
         Log.d("TelemetryManager", "Shutting down TracerProvider.")
         tracerProvider.shutdown()
         Log.d("TelemetryManager", "Shutting down MeterProvider.")
