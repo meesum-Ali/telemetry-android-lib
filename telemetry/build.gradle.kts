@@ -9,7 +9,7 @@ plugins {
 
 /* ───────── Android ───────── */
 android {
-    namespace  = "com.bazaar.telemetry"
+    namespace  = "io.github.meesum.telemetry" // Renamed namespace
     compileSdk = 34
 
     defaultConfig { minSdk = 21 }
@@ -49,8 +49,59 @@ dependencies {
 publishing {
     publications.create<MavenPublication>("release") {
         afterEvaluate { from(components["release"]) }   // publish the AAR
-        groupId    = "com.bazaar.telemetry"
-        artifactId = "telemetry"
-        version    = "1.0.0"
+        groupId    = "io.github.meesum.telemetry" // Renamed groupId
+        artifactId = "telemetry" // ArtifactId can remain 'telemetry' or be 'meesum-telemetry'
+        version    = "1.0.0" // TODO: Consider moving version to gradle.properties
+
+        // It's good practice to add POM details even for GitHub Packages / Maven Local
+        // This was part of the previous plan, but still relevant.
+        pom {
+            name.set("Meesum Telemetry SDK") // Renamed
+            description.set("An Android SDK for collecting and exporting telemetry data.") // TODO: Update description if needed
+            // TODO: Add url, licenses, developers, scm for a more complete POM
+            // For example:
+            // url.set("https://github.com/meesum/telemetry-android-lib") // Replace with actual URL
+            // licenses {
+            //     license {
+            //         name.set("The Apache License, Version 2.0")
+            //         url.set("http://www.apache.org/licenses/LICENSE-2.0.txt")
+            //     }
+            // }
+            // developers {
+            //     developer {
+            //         id.set("meesum") // Replace with your GitHub username or org ID
+            //         name.set("Meesum") // Replace with your name or org name
+            //         email.set("meesum@example.com") // Replace with your email
+            //     }
+            // }
+            // scm {
+            //     connection.set("scm:git:git://github.com/meesum/telemetry-android-lib.git") // Replace
+            //     developerConnection.set("scm:git:ssh://github.com/meesum/telemetry-android-lib.git") // Replace
+            //     url.set("https://github.com/meesum/telemetry-android-lib") // Replace
+            // }
+        }
+    }
+    repositories {
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/YOUR_GITHUB_USERNAME_OR_ORG/YOUR_REPOSITORY_NAME") // TODO: Replace with your GitHub username/org and repository name
+            credentials {
+                // Credentials are username/password based.
+                // It's recommended to use environment variables for these, especially GITHUB_TOKEN for the password.
+                // For local publishing, you might set them in ~/.gradle/gradle.properties
+                // username = System.getenv("GITHUB_ACTOR") ?: project.findProperty("gpr.user") as String?
+                // password = System.getenv("GITHUB_TOKEN") ?: project.findProperty("gpr.key") as String?
+                //
+                // For GitHub Actions, GITHUB_ACTOR and GITHUB_TOKEN are automatically available.
+                // Ensure your GITHUB_TOKEN has `write:packages` scope.
+                // If you have them in gradle.properties:
+                // username = project.findProperty("gpr.user") as String? ?: System.getenv("GITHUB_ACTOR")
+                // password = project.findProperty("gpr.key") as String? ?: System.getenv("GITHUB_TOKEN")
+                // For this setup, we'll assume environment variables or that the user will uncomment and configure as needed.
+                // Example using environment variables (preferred for CI like GitHub Actions):
+                username = System.getenv("GITHUB_ACTOR")
+                password = System.getenv("GITHUB_TOKEN")
+            }
+        }
     }
 }

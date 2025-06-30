@@ -16,15 +16,42 @@ A lightweight Android library that provides a simple wrapper around OpenTelemetr
 
 ## Installation
 
-Add the library to your app's `build.gradle`:
+The library will be available via GitHub Packages.
 
-```gradle
-dependencies {
-    implementation 'com.github.yourusername:telemetry-android:1.0.0'
+**1. Configure GitHub Packages repository in your `settings.gradle(.kts)` or root `build.gradle(.kts)`:**
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        google()
+        mavenCentral()
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/YOUR_GITHUB_USERNAME_OR_ORG/YOUR_REPOSITORY_NAME") // TODO: Replace with the correct OWNER/REPO
+            // You might need credentials if the package is private or your organization requires it
+            // credentials {
+            //     username = System.getenv("GITHUB_ACTOR")
+            //     password = System.getenv("GITHUB_TOKEN")
+            // }
+        }
+    }
 }
 ```
 
-Or build from source:
+**2. Add the library to your app's `build.gradle(.kts)`:**
+
+```kotlin
+dependencies {
+    // TODO: Replace with the correct groupId, artifactId and version after publishing
+    implementation("io.github.meesum.telemetry:telemetry:1.0.0")
+}
+```
+
+Alternatively, you can build from source or use a local build.
+
+### Building from Source
 
 ```bash
 ./gradlew :telemetry:assembleRelease
@@ -132,14 +159,72 @@ TelemetryManager.log(
 )
 ```
 
-## Local Development
+## Local Development & Publishing
 
-1. Clone the repository
-2. Open in Android Studio or your preferred IDE
-3. Build the project:
-   ```bash
-   ./gradlew build
-   ```
+### Building the Library
+
+1.  Clone the repository.
+2.  Open in Android Studio or your preferred IDE.
+3.  Build the project:
+    ```bash
+    ./gradlew :telemetry:build
+    ```
+
+### Publishing to Maven Local
+
+This is useful for testing the package locally in other projects on your machine.
+
+1.  Ensure the `groupId`, `artifactId`, and `version` in `telemetry/build.gradle.kts` are set as desired.
+2.  Run the publish task:
+    ```bash
+    ./gradlew :telemetry:publishToMavenLocal
+    ```
+3.  In your other project, make sure `mavenLocal()` is listed as a repository in `settings.gradle(.kts)` or `build.gradle(.kts)`:
+    ```kotlin
+    // settings.gradle.kts
+    dependencyResolutionManagement {
+        repositories {
+            mavenLocal()
+            // ... other repositories
+        }
+    }
+    ```
+4.  Then, add the dependency with the same `groupId`, `artifactId`, and `version` you published.
+
+### Publishing to GitHub Packages
+
+This makes the package available via GitHub's package registry.
+
+1.  **Prerequisites:**
+    *   Ensure you have a GitHub Personal Access Token (PAT) with `write:packages` scope.
+    *   Set `GITHUB_ACTOR` (your GitHub username) and `GITHUB_TOKEN` (your PAT) as environment variables. For GitHub Actions, these are typically provided automatically.
+    *   In `telemetry/build.gradle.kts`, update the GitHub Packages repository URL with your GitHub username/organization and the repository name:
+        ```kotlin
+        publishing {
+            repositories {
+                maven {
+                    name = "GitHubPackages"
+                    // TODO: Replace YOUR_GITHUB_USERNAME_OR_ORG and YOUR_REPOSITORY_NAME
+                    url = uri("https://maven.pkg.github.com/YOUR_GITHUB_USERNAME_OR_ORG/YOUR_REPOSITORY_NAME")
+                    credentials {
+                        username = System.getenv("GITHUB_ACTOR")
+                        password = System.getenv("GITHUB_TOKEN")
+                    }
+                }
+            }
+        }
+        ```
+    *   Fill in the POM details (name, description, URL, license, developers, SCM) in `telemetry/build.gradle.kts` for the `release` publication.
+
+2.  **Publish:**
+    Run the following command:
+    ```bash
+    ./gradlew :telemetry:publishReleasePublicationToGitHubPackagesRepository
+    ```
+    (The task name might simplify to `./gradlew :telemetry:publish` if no other remote repositories are configured for the publication).
+
+3.  **Consuming from GitHub Packages:**
+    Follow the "Installation" section at the beginning of this README, ensuring the repository URL in the consumer's `settings.gradle(.kts)` points to your GitHub Packages repository.
 
 ## Testing
 
