@@ -24,8 +24,8 @@ android {
 /* ───────── Deps ───────── */
 dependencies {
     // keep every OTEL lib on the same version via the BOM
-    api(platform("io.opentelemetry:opentelemetry-bom:1.49.0"))
-    api("io.opentelemetry:opentelemetry-api")
+    implementation(platform("io.opentelemetry:opentelemetry-bom:1.49.0"))
+    implementation("io.opentelemetry:opentelemetry-api")
 
     implementation("io.opentelemetry:opentelemetry-api")
     implementation("io.opentelemetry:opentelemetry-sdk")
@@ -39,6 +39,11 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.4.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.5.1")
     implementation("io.grpc:grpc-okhttp:1.63.0")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.mockito:mockito-core:3.12.4")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:3.2.0") // For Kotlin-specific syntax
+    testImplementation("io.opentelemetry:opentelemetry-sdk-testing:1.49.0") // For testing OpenTelemetry
 }
 
 publishing {
