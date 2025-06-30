@@ -4,12 +4,8 @@ import android.app.Application
 import android.os.Build
 import android.util.Log
 import androidx.annotation.RequiresApi
-import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.logs.LogRecordBuilder
-import io.opentelemetry.api.logs.Logger
-import io.opentelemetry.api.metrics.LongCounter
-import io.opentelemetry.api.metrics.Meter
 import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Scope
 import io.opentelemetry.exporter.otlp.logs.OtlpGrpcLogRecordExporter
@@ -34,9 +30,7 @@ import java.util.concurrent.TimeUnit
  * - Exposes API to add per-user/session attributes
  * - Supports graceful shutdown/flush
  */
-object TelemetryManager {
-
-    enum class LogLevel { DEBUG, INFO, WARN, ERROR }
+object TelemetryManager : TelemetryService {
 
     private var initialized = false
     private lateinit var tracerProvider: SdkTracerProvider
@@ -44,21 +38,21 @@ object TelemetryManager {
     private lateinit var loggerProvider: SdkLoggerProvider
 
     private lateinit var tracer: Tracer
-    private lateinit var meter: Meter
-    private lateinit var logger: Logger
-    private lateinit var requestCounter: LongCounter
+    private lateinit var meter: io.opentelemetry.api.metrics.Meter
+    private lateinit var logger: io.opentelemetry.api.logs.Logger
+    private lateinit var requestCounter: io.opentelemetry.api.metrics.LongCounter
 
     // Attributes to apply globally to every span/log/metric
     private var commonAttributes: Attributes = Attributes.empty()
 
     @RequiresApi(Build.VERSION_CODES.O)
-    fun init(
+    override fun init(
         application: Application,
         serviceName: String,
         serviceVersion: String,
         environment: String,
         otlpEndpoint: String,
-        headers: Map<String, String> = emptyMap()
+        headers: Map<String, String>
     ) {
         if (initialized) return
         initialized = true
@@ -131,35 +125,43 @@ object TelemetryManager {
             .setUnit("1")
             .build()
 
-        Log.i("TelemetryManager", "OpenTelemetry initialized → $otlpEndpoint")
+        Log.i("TelemetryManager", "OpenTelemetry initialized. Service: $serviceName, Version: $serviceVersion, Env: $environment")
+        Log.i("TelemetryManager", "Metrics OTLP endpoint: $otlpEndpoint, Export interval: 30s")
+        Log.i("TelemetryManager", "Traces/Logs OTLP endpoint: $otlpEndpoint")
     }
 
     /**
      * Set additional common attributes (e.g. user.id, session.id)
      */
-    fun setCommonAttributes(attrs: Attributes) {
+    override fun setCommonAttributes(attrs: Attributes) {
+        Log.d("TelemetryManager", "Setting common attributes: ${attrs.toOtelAttributes()}")
         commonAttributes = attrs
     }
 
     /**
      * Force flush and shutdown all SDK providers
      */
-    fun shutdown() {
+    override fun shutdown() {
+        Log.i("TelemetryManager", "Shutting down TelemetryManager...")
+        Log.d("TelemetryManager", "Shutting down TracerProvider.")
         tracerProvider.shutdown()
+        Log.d("TelemetryManager", "Shutting down MeterProvider.")
         meterProvider.shutdown()
+        Log.d("TelemetryManager", "Shutting down LoggerProvider.")
         loggerProvider.shutdown()
+        Log.i("TelemetryManager", "TelemetryManager shutdown complete.")
     }
 
-    @JvmStatic
-    fun <T> span(
+    override fun <T> span(
         name: String,
-        attrs: Attributes = Attributes.empty(),
+        attrs: Attributes,
         block: () -> T
     ): T {
         // merge common + call-specific
-        val merged = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
+        val mergedAttrs = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
+        val otelAttrs = mergedAttrs.toOtelAttributes()
         val span = tracer.spanBuilder(name)
-            .setAllAttributes(merged)
+            .setAllAttributes(otelAttrs)
             .startSpan()
         val scope: Scope = span.makeCurrent()
         return try {
@@ -173,29 +175,32 @@ object TelemetryManager {
         }
     }
 
-    fun log(
-        level: LogLevel,
+    override fun log(
+        level: TelemetryService.LogLevel,
         message: String,
-        attrs: Attributes = Attributes.empty()
+        attrs: Attributes
     ) {
-        val merged = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
+        val mergedAttrs = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
+        val otelAttrs = mergedAttrs.toOtelAttributes()
         val record: LogRecordBuilder = logger.logRecordBuilder()
             .setBody(message)
-            .setAllAttributes(merged)
+            .setAllAttributes(otelAttrs)
         when (level) {
-            LogLevel.DEBUG -> record.setSeverity(io.opentelemetry.api.logs.Severity.DEBUG)
-            LogLevel.INFO -> record.setSeverity(io.opentelemetry.api.logs.Severity.INFO)
-            LogLevel.WARN -> record.setSeverity(io.opentelemetry.api.logs.Severity.WARN)
-            LogLevel.ERROR -> record.setSeverity(io.opentelemetry.api.logs.Severity.ERROR)
+            TelemetryService.LogLevel.DEBUG -> record.setSeverity(io.opentelemetry.api.logs.Severity.DEBUG)
+            TelemetryService.LogLevel.INFO -> record.setSeverity(io.opentelemetry.api.logs.Severity.INFO)
+            TelemetryService.LogLevel.WARN -> record.setSeverity(io.opentelemetry.api.logs.Severity.WARN)
+            TelemetryService.LogLevel.ERROR -> record.setSeverity(io.opentelemetry.api.logs.Severity.ERROR)
         }
         record.emit()
     }
 
-    fun incRequestCount(
-        amount: Long = 1,
-        attrs: Attributes = Attributes.empty()
+    override fun incRequestCount(
+        amount: Long,
+        attrs: Attributes
     ) {
-        val merged = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
-        requestCounter.add(amount, merged)
+        val mergedAttrs = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
+        val otelAttrs = mergedAttrs.toOtelAttributes()
+        Log.d("TelemetryManager", "incRequestCount called. Amount: $amount, Attributes: $otelAttrs, Common Attributes: ${commonAttributes.toOtelAttributes()}")
+        requestCounter.add(amount, otelAttrs)
     }
 }
