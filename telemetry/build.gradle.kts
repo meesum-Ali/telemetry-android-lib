@@ -77,6 +77,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.5.1")
     implementation("io.grpc:grpc-okhttp:1.63.0")
 
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.fragment:fragment-ktx:1.8.8")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:3.12.4")
     testImplementation("org.mockito.kotlin:mockito-kotlin:3.2.0") // For Kotlin-specific syntax

@@ -1,4 +1,3 @@
-
 # Telemetry Android Library
 
 A lightweight Android library that provides a simple wrapper around OpenTelemetry for instrumenting Android applications with distributed tracing, metrics, and logging. Seamlessly integrates with Grafana's LGTM (Loki, Grafana, Tempo, Mimir) stack.
@@ -13,6 +12,9 @@ A lightweight Android library that provides a simple wrapper around OpenTelemetr
 - 🚀 **Easy Integration**: Simple setup and initialization
 - 🔌 **Grafana LGTM Ready**: Pre-configured for Grafana's observability stack
 - 🛡️ **Production Ready**: Built with performance and reliability in mind
+- 🧩 **Custom Exporters**: Plug in your own OpenTelemetry exporters
+- ⚡ **Automatic Activity Instrumentation**: Optionally trace Activity lifecycle automatically
+- 🌐 **Network Request Monitoring**: OkHttp interceptor for automatic HTTP tracing/metrics
 
 ## Installation
 
@@ -159,6 +161,68 @@ TelemetryManager.log(
 )
 ```
 
+### Custom Exporters (Minimal Config)
+
+You can provide your own exporter configuration with just endpoint, headers, and type (no OpenTelemetry types needed):
+
+```kotlin
+TelemetryManager.init(
+    application = this,
+    serviceName = "MyAndroidApp",
+    serviceVersion = BuildConfig.VERSION_NAME,
+    environment = if (BuildConfig.DEBUG) "debug" else "production",
+    otlpEndpoint = "http://your-otel-collector:4317",
+    traceExporterConfig = TelemetryExporterConfig(
+        endpoint = "http://custom-trace-endpoint:4317",
+        headers = mapOf("authorization" to "Bearer ...")
+    ),
+    // metricExporterConfig and logExporterConfig are similar, or can be omitted for defaults
+)
+```
+
+### Automatic Activity Instrumentation
+
+Enable automatic tracing of Activity lifecycle events:
+
+```kotlin
+TelemetryManager.init(
+    application = this,
+    serviceName = "MyAndroidApp",
+    serviceVersion = BuildConfig.VERSION_NAME,
+    environment = if (BuildConfig.DEBUG) "debug" else "production",
+    otlpEndpoint = "http://your-otel-collector:4317",
+    autoInstrumentActivities = true
+)
+```
+
+### Network Request Monitoring (OkHttp)
+
+Add the provided interceptor to your OkHttp client for automatic HTTP tracing and metrics:
+
+```kotlin
+val client = OkHttpClient.Builder()
+    .addInterceptor(TelemetryManager.createOkHttpInterceptor())
+    .build()
+```
+
+### Frame Metrics with Screen Name
+
+Frame time metrics now include a `screen.name` label, so you can identify which Activity, Fragment, or Compose screen is being measured.
+
+- For Activities: The screen name is set to the Activity's class name automatically.
+- For Fragments: The screen name is set to the Fragment's class name when it is resumed.
+- For Jetpack Compose or custom navigation: Call `TelemetryManager.setCurrentScreen("YourScreenName")` whenever the screen changes.
+
+**Example for Compose:**
+```kotlin
+// In your Composable or navigation handler
+LaunchedEffect(currentScreen) {
+    TelemetryManager.setCurrentScreen(currentScreen)
+}
+```
+
+This makes it easy to filter and analyze frame performance by screen in your observability backend.
+
 ## Local Development & Publishing
 
 ### Building the Library
@@ -234,6 +298,32 @@ Run the test suite with:
 ./gradlew test
 ```
 
+## Testing with a Local LGTM Stack
+
+If you want to test your telemetry integration with a local LGTM (Loki, Grafana, Tempo, Mimir) stack, you can use the [otel-stack](https://github.com/meesum-Ali/otel-stack) repository:
+
+1. Clone the repo:
+   ```bash
+   git clone https://github.com/meesum-Ali/otel-stack.git
+   cd otel-stack
+   ```
+2. Start the stack:
+   ```bash
+   docker-compose up -d
+   ```
+   This will start the OTel Collector, Tempo, Loki, Prometheus, and Grafana.
+
+   - Grafana: http://localhost:3000
+   - OTel Collector: http://localhost:4317
+   - Tempo: http://localhost:3200
+   - Prometheus: http://localhost:9090
+   - Loki: http://localhost:3100
+
+3. Point your TelemetryManager `otlpEndpoint` to `http://localhost:4317`.
+4. View traces/logs/metrics in Grafana at http://localhost:3000 (default login: admin/admin).
+
+For more details, see the [otel-stack README](https://github.com/meesum-Ali/otel-stack).
+
 ## Contributing
 
 Contributions are welcome! Please read our [contributing guidelines](CONTRIBUTING.md) before submitting pull requests.
@@ -254,7 +344,9 @@ For support, please open an issue in the GitHub repository.
 
 ## Roadmap
 
-- [ ] Add more built-in metrics
-- [ ] Support for custom exporters
-- [ ] Automatic activity/fragment instrumentation
-- [ ] Network request monitoring
+- [x] Add more built-in metrics
+- [x] Support for custom exporters (minimal config, no OpenTelemetry types in API)
+- [x] Automatic activity/fragment instrumentation (Activity supported)
+- [x] Network request monitoring (OkHttp supported)
+- [ ] Automatic fragment instrumentation
+- [ ] User-defined custom metrics API

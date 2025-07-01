@@ -12,7 +12,11 @@ interface TelemetryService {
         serviceVersion: String,
         environment: String,
         otlpEndpoint: String,
-        headers: Map<String, String> = emptyMap()
+        headers: Map<String, String> = emptyMap(),
+        traceExporterConfig: TelemetryExporterConfig? = null,
+        metricExporterConfig: TelemetryExporterConfig? = null,
+        logExporterConfig: TelemetryExporterConfig? = null,
+        autoInstrumentActivities: Boolean = false
     )
 
     fun setCommonAttributes(attrs: Attributes)
@@ -36,4 +40,14 @@ interface TelemetryService {
         amount: Long = 1,
         attrs: Attributes = Attributes.empty()
     )
+}
+
+// Exporter config abstractions for minimal user input
+
+data class TelemetryExporterConfig(
+    val endpoint: String,
+    val headers: Map<String, String> = emptyMap(),
+    val type: ExporterType = ExporterType.OTLP_GRPC
+) {
+    enum class ExporterType { OTLP_GRPC /*, OTLP_HTTP, JAEGER, ZIPKIN, etc. */ }
 }

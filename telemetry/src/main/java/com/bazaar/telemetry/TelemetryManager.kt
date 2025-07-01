@@ -80,6 +80,18 @@ object TelemetryManager : TelemetryService {
     private var lastFrameTimeNanos = AtomicLong(0)
     private var frameTimeCallback: Choreographer.FrameCallback? = null
 
+    // Track the current screen (Activity/Fragment/Compose)
+    @Volatile
+    private var currentScreenName: String = "unknown"
+
+    /**
+     * Public API for Compose or manual screen tracking
+     */
+    @JvmStatic
+    fun setCurrentScreen(screenName: String) {
+        currentScreenName = screenName
+    }
+
     @RequiresPermission(Manifest.permission.ACCESS_NETWORK_STATE)
     @RequiresApi(Build.VERSION_CODES.O)
     override fun init(
@@ -88,13 +100,16 @@ object TelemetryManager : TelemetryService {
         serviceVersion: String,
         environment: String,
         otlpEndpoint: String,
-        headers: Map<String, String>
+        headers: Map<String, String>,
+        traceExporterConfig: TelemetryExporterConfig?,
+        metricExporterConfig: TelemetryExporterConfig?,
+        logExporterConfig: TelemetryExporterConfig?,
+        autoInstrumentActivities: Boolean
     ) {
         if (initialized) return
         initialized = true
         appStartTimeMs = System.currentTimeMillis()
 
-        // Build resource with global service attributes
         val resource = Resource.getDefault().merge(
             Resource.builder()
                 .put(ServiceAttributes.SERVICE_NAME, serviceName)
@@ -103,21 +118,39 @@ object TelemetryManager : TelemetryService {
                 .build()
         )
 
-        // Create exporters
-        val spanExporter = OtlpGrpcSpanExporter.builder()
-            .setEndpoint(otlpEndpoint)
-            .apply { headers.forEach { addHeader(it.key, it.value) } }
-            .build()
-        val logExporter = OtlpGrpcLogRecordExporter.builder()
-            .setEndpoint(otlpEndpoint)
-            .apply { headers.forEach { addHeader(it.key, it.value) } }
-            .build()
-        val metricExporter = OtlpGrpcMetricExporter.builder()
-            .setEndpoint(otlpEndpoint)
-            .apply { headers.forEach { addHeader(it.key, it.value) } }
-            .build()
+        // Helper to build exporter from config
+        fun buildSpanExporter(cfg: TelemetryExporterConfig?): io.opentelemetry.sdk.trace.export.SpanExporter {
+            val c = cfg ?: TelemetryExporterConfig(otlpEndpoint, headers)
+            return when (c.type) {
+                TelemetryExporterConfig.ExporterType.OTLP_GRPC -> OtlpGrpcSpanExporter.builder()
+                    .setEndpoint(c.endpoint)
+                    .apply { c.headers.forEach { addHeader(it.key, it.value) } }
+                    .build()
+            }
+        }
+        fun buildMetricExporter(cfg: TelemetryExporterConfig?): io.opentelemetry.sdk.metrics.export.MetricExporter {
+            val c = cfg ?: TelemetryExporterConfig(otlpEndpoint, headers)
+            return when (c.type) {
+                TelemetryExporterConfig.ExporterType.OTLP_GRPC -> OtlpGrpcMetricExporter.builder()
+                    .setEndpoint(c.endpoint)
+                    .apply { c.headers.forEach { addHeader(it.key, it.value) } }
+                    .build()
+            }
+        }
+        fun buildLogExporter(cfg: TelemetryExporterConfig?): io.opentelemetry.sdk.logs.export.LogRecordExporter {
+            val c = cfg ?: TelemetryExporterConfig(otlpEndpoint, headers)
+            return when (c.type) {
+                TelemetryExporterConfig.ExporterType.OTLP_GRPC -> OtlpGrpcLogRecordExporter.builder()
+                    .setEndpoint(c.endpoint)
+                    .apply { c.headers.forEach { addHeader(it.key, it.value) } }
+                    .build()
+            }
+        }
 
-        // Build providers
+        val spanExporter = buildSpanExporter(traceExporterConfig)
+        val metricExporterFinal = buildMetricExporter(metricExporterConfig)
+        val logExporterFinal = buildLogExporter(logExporterConfig)
+
         tracerProvider = SdkTracerProvider.builder()
             .addSpanProcessor(
                 BatchSpanProcessor.builder(spanExporter)
@@ -129,7 +162,7 @@ object TelemetryManager : TelemetryService {
 
         meterProvider = SdkMeterProvider.builder()
             .registerMetricReader(
-                PeriodicMetricReader.builder(metricExporter)
+                PeriodicMetricReader.builder(metricExporterFinal)
                     .setInterval(Duration.ofSeconds(30))
                     .build()
             )
@@ -138,14 +171,13 @@ object TelemetryManager : TelemetryService {
 
         loggerProvider = SdkLoggerProvider.builder()
             .addLogRecordProcessor(
-                BatchLogRecordProcessor.builder(logExporter)
+                BatchLogRecordProcessor.builder(logExporterFinal)
                     .setScheduleDelay(100, TimeUnit.MILLISECONDS)
                     .build()
             )
             .setResource(resource)
             .build()
 
-        // Register global SDK
         val sdk = OpenTelemetrySdk.builder()
             .setTracerProvider(tracerProvider)
             .setMeterProvider(meterProvider)
@@ -156,7 +188,6 @@ object TelemetryManager : TelemetryService {
         meter = sdk.getMeter("telemetry-android")
         logger = sdk.logsBridge.get("telemetry-android")
 
-        // Example counter
         requestCounter = meter.counterBuilder("http_client_request_count")
             .setDescription("Number of HTTP requests issued by the app")
             .setUnit("1")
@@ -214,6 +245,39 @@ object TelemetryManager : TelemetryService {
         setupStorageMonitoring(application)
         setupFrameMonitoring(application)
         setupAppLifecycleMonitoring(application)
+
+        // Auto-instrument activities if requested
+        if (autoInstrumentActivities) {
+            application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+                private var currentSpan: io.opentelemetry.api.trace.Span? = null
+                override fun onActivityCreated(activity: Activity, savedInstanceState: android.os.Bundle?) {
+                    // Register fragment lifecycle for screen tracking if possible
+                    if (activity is androidx.fragment.app.FragmentActivity) {
+                        activity.supportFragmentManager.registerFragmentLifecycleCallbacks(
+                            object : androidx.fragment.app.FragmentManager.FragmentLifecycleCallbacks() {
+                                override fun onFragmentResumed(fm: androidx.fragment.app.FragmentManager, fragment: androidx.fragment.app.Fragment) {
+                                    currentScreenName = fragment.javaClass.simpleName
+                                }
+                            }, true
+                        )
+                    }
+                }
+                override fun onActivityStarted(activity: Activity) {
+                    currentSpan = tracer.spanBuilder("ActivityStarted:${activity.javaClass.simpleName}").startSpan()
+                    currentSpan?.makeCurrent()
+                }
+                override fun onActivityResumed(activity: Activity) {
+                    currentScreenName = activity.javaClass.simpleName
+                }
+                override fun onActivityPaused(activity: Activity) {}
+                override fun onActivityStopped(activity: Activity) {
+                    currentSpan?.end()
+                    currentSpan = null
+                }
+                override fun onActivitySaveInstanceState(activity: Activity, outState: android.os.Bundle) {}
+                override fun onActivityDestroyed(activity: Activity) {}
+            })
+        }
 
         // Install crash handler
         defaultExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
@@ -396,7 +460,11 @@ object TelemetryManager : TelemetryService {
             .buildWithCallback { measurement ->
                 val frameTime = lastFrameTimeNanos.get()
                 if (frameTime > 0) {
-                    measurement.record(frameTime, commonAttributes.toOtelAttributes())
+                    val attrs = Attributes.builder()
+                        .putAll(commonAttributes)
+                        .put("screen.name", currentScreenName)
+                        .build()
+                    measurement.record(frameTime, attrs.toOtelAttributes())
                 }
             }
         // Set up frame callback to measure frame times
@@ -527,4 +595,35 @@ object TelemetryManager : TelemetryService {
             -1
         }
     }
+
+    /**
+     * OkHttp Interceptor for automatic network request tracing and metrics.
+     */
+    class OkHttpTelemetryInterceptor : okhttp3.Interceptor {
+        override fun intercept(chain: okhttp3.Interceptor.Chain): okhttp3.Response {
+            val request = chain.request()
+            val span = tracer.spanBuilder("HTTP ${request.method} ${request.url.encodedPath}")
+                .setAttribute("http.method", request.method)
+                .setAttribute("http.url", request.url.toString())
+                .startSpan()
+            val scope = span.makeCurrent()
+            try {
+                val response = chain.proceed(request)
+                span.setAttribute("http.status_code", response.code.toLong())
+                return response
+            } catch (e: Exception) {
+                span.recordException(e)
+                throw e
+            } finally {
+                scope.close()
+                span.end()
+            }
+        }
+    }
+
+    /**
+     * Returns an OkHttp Interceptor for automatic network request tracing/metrics.
+     */
+    @JvmStatic
+    fun createOkHttpInterceptor(): okhttp3.Interceptor = OkHttpTelemetryInterceptor()
 }
