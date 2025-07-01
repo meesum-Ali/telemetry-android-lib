@@ -4,12 +4,15 @@ import androidx.test.core.app.ApplicationProvider
 import com.bazaar.telemetry.Attributes
 import com.bazaar.telemetry.TelemetryManager
 import org.junit.After
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
-import org.robolectric.annotation.Config
-import org.robolectric.RobolectricTestRunner
 import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [Build.VERSION_CODES.O])
@@ -21,12 +24,14 @@ class TelemetryManagerTest {
     fun setUp() {
         application = ApplicationProvider.getApplicationContext()
         resetTelemetryManager()
+        resetGlobalOpenTelemetry()
     }
 
     @After
     fun tearDown() {
         TelemetryManager.shutdown()
         resetTelemetryManager()
+        resetGlobalOpenTelemetry()
     }
 
     @Test
@@ -114,5 +119,16 @@ class TelemetryManagerTest {
         val field = TelemetryManager::class.java.getDeclaredField("initialized")
         field.isAccessible = true
         field.setBoolean(TelemetryManager, false)
+    }
+
+    private fun resetGlobalOpenTelemetry() {
+        try {
+            val clazz = Class.forName("io.opentelemetry.api.GlobalOpenTelemetry")
+            val field = clazz.getDeclaredField("globalOpenTelemetry")
+            field.isAccessible = true
+            field.set(null, null)
+        } catch (e: Exception) {
+            // Ignore if fails (e.g., field not found)
+        }
     }
 }
