@@ -3,6 +3,7 @@ import android.os.Build
 import androidx.test.core.app.ApplicationProvider
 import com.bazaar.telemetry.Attributes
 import com.bazaar.telemetry.TelemetryManager
+import com.bazaar.telemetry.TelemetryService
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -113,6 +114,95 @@ class TelemetryManagerTest {
             headers = emptyMap()
         )
         TelemetryManager.incRequestCount(2, Attributes.builder().put("path", "/foo").build())
+    }
+
+    @Test
+    fun `shutdown should be idempotent`() {
+        TelemetryManager.init(
+            application,
+            serviceName = "TestService",
+            serviceVersion = "1.0",
+            environment = "test",
+            otlpEndpoint = "http://localhost:4317",
+            headers = emptyMap()
+        )
+        TelemetryManager.shutdown()
+        // Second shutdown should not throw
+        TelemetryManager.shutdown()
+    }
+
+    @Test
+    fun `log should not throw for all log levels`() {
+        TelemetryManager.init(
+            application,
+            serviceName = "TestService",
+            serviceVersion = "1.0",
+            environment = "test",
+            otlpEndpoint = "http://localhost:4317",
+            headers = emptyMap()
+        )
+        val attrs = Attributes.builder().put("foo", "bar").build()
+        TelemetryManager.log(TelemetryService.LogLevel.DEBUG, "debug message", attrs)
+        TelemetryManager.log(TelemetryService.LogLevel.INFO, "info message", attrs)
+        TelemetryManager.log(TelemetryService.LogLevel.WARN, "warn message", attrs)
+        TelemetryManager.log(TelemetryService.LogLevel.ERROR, "error message", attrs, Throwable("test error"))
+    }
+
+    @Test
+    fun `span should merge common and custom attributes`() {
+        TelemetryManager.init(
+            application,
+            serviceName = "TestService",
+            serviceVersion = "1.0",
+            environment = "test",
+            otlpEndpoint = "http://localhost:4317",
+            headers = emptyMap()
+        )
+        TelemetryManager.setCommonAttributes(Attributes.builder().put("common", "yes").build())
+        val result = TelemetryManager.span("test-span", Attributes.builder().put("custom", "attr").build()) {
+            "done"
+        }
+        assertEquals("done", result)
+        // No direct way to assert merged attributes without a mock, but this ensures no crash
+    }
+
+    @Test
+    fun `incRequestCount should work with default parameters`() {
+        TelemetryManager.init(
+            application,
+            serviceName = "TestService",
+            serviceVersion = "1.0",
+            environment = "test",
+            otlpEndpoint = "http://localhost:4317",
+            headers = emptyMap()
+        )
+        TelemetryManager.incRequestCount()
+    }
+
+    @Test
+    fun `should allow re-init after shutdown`() {
+        TelemetryManager.init(
+            application,
+            serviceName = "TestService",
+            serviceVersion = "1.0",
+            environment = "test",
+            otlpEndpoint = "http://localhost:4317",
+            headers = emptyMap()
+        )
+        TelemetryManager.shutdown()
+        resetTelemetryManager()
+        resetGlobalOpenTelemetry()
+        TelemetryManager.init(
+            application,
+            serviceName = "TestService2",
+            serviceVersion = "2.0",
+            environment = "test2",
+            otlpEndpoint = "http://localhost:4317",
+            headers = emptyMap()
+        )
+        val initializedField = TelemetryManager::class.java.getDeclaredField("initialized")
+        initializedField.isAccessible = true
+        assertTrue(initializedField.getBoolean(TelemetryManager))
     }
 
     private fun resetTelemetryManager() {
