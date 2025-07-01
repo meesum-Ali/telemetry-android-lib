@@ -170,7 +170,7 @@ object TelemetryManager : TelemetryService {
             .buildWithCallback { measurement ->
                 val runtime = Runtime.getRuntime()
                 val used = runtime.totalMemory() - runtime.freeMemory()
-                measurement.record(used)
+                measurement.record(used, commonAttributes.toOtelAttributes())
             }
 
         cpuTimeGauge = meter.gaugeBuilder("app_cpu_time_ms")
@@ -178,7 +178,7 @@ object TelemetryManager : TelemetryService {
             .setDescription("CPU time used by the app in ms")
             .setUnit("ms")
             .buildWithCallback { measurement ->
-                measurement.record(Process.getElapsedCpuTime())
+                measurement.record(Process.getElapsedCpuTime(), commonAttributes.toOtelAttributes())
             }
 
         uptimeGauge = meter.gaugeBuilder("app_uptime_ms")
@@ -186,7 +186,7 @@ object TelemetryManager : TelemetryService {
             .setDescription("App uptime in ms")
             .setUnit("ms")
             .buildWithCallback { measurement ->
-                measurement.record(System.currentTimeMillis() - appStartTimeMs)
+                measurement.record(System.currentTimeMillis() - appStartTimeMs, commonAttributes.toOtelAttributes())
             }
 
         batteryLevelGauge = meter.gaugeBuilder("device_battery_percent")
@@ -197,7 +197,7 @@ object TelemetryManager : TelemetryService {
                 val bm = application.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
                 if (bm != null) {
                     val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-                    if (level >= 0) measurement.record(level.toLong())
+                    if (level >= 0) measurement.record(level.toLong(), commonAttributes.toOtelAttributes())
                 }
             }
 
@@ -206,7 +206,7 @@ object TelemetryManager : TelemetryService {
             .setDescription("Number of active threads in the app")
             .setUnit("1")
             .buildWithCallback { measurement ->
-                measurement.record(Thread.activeCount().toLong())
+                measurement.record(Thread.activeCount().toLong(), commonAttributes.toOtelAttributes())
             }
 
         // Setup additional metrics
@@ -360,7 +360,7 @@ object TelemetryManager : TelemetryService {
             .buildWithCallback { measurement ->
                 val bytes = getNetworkBytesTransferred()
                 if (bytes >= 0) {
-                    measurement.record(bytes)
+                    measurement.record(bytes, commonAttributes.toOtelAttributes())
                 }
             }
 
@@ -370,7 +370,7 @@ object TelemetryManager : TelemetryService {
             .ofLongs()
             .buildWithCallback { measurement ->
                 val networkType = getActiveNetworkType(context)
-                measurement.record(networkType.toLong())
+                measurement.record(networkType.toLong(), commonAttributes.toOtelAttributes())
             }
     }
 
@@ -382,7 +382,7 @@ object TelemetryManager : TelemetryService {
             .buildWithCallback { measurement ->
                 val usedSpace = getUsedStorageSpace(context)
                 if (usedSpace >= 0) {
-                    measurement.record(usedSpace)
+                    measurement.record(usedSpace, commonAttributes.toOtelAttributes())
                 }
             }
     }
@@ -396,7 +396,7 @@ object TelemetryManager : TelemetryService {
             .buildWithCallback { measurement ->
                 val frameTime = lastFrameTimeNanos.get()
                 if (frameTime > 0) {
-                    measurement.record(frameTime)
+                    measurement.record(frameTime, commonAttributes.toOtelAttributes())
                 }
             }
         // Set up frame callback to measure frame times
@@ -435,7 +435,7 @@ object TelemetryManager : TelemetryService {
             .setDescription("App state (0=background, 1=foreground)")
             .ofLongs()
             .buildWithCallback { measurement ->
-                measurement.record(if (activitiesStarted > 0) 1L else 0L)
+                measurement.record(if (activitiesStarted > 0) 1L else 0L, commonAttributes.toOtelAttributes())
             }
 
         // Screen density
@@ -444,7 +444,7 @@ object TelemetryManager : TelemetryService {
             .ofLongs()
             .buildWithCallback { measurement ->
                 val metrics = application.resources.displayMetrics
-                measurement.record(metrics.densityDpi.toLong())
+                measurement.record(metrics.densityDpi.toLong(), commonAttributes.toOtelAttributes())
             }
 
         // Register activity lifecycle callbacks
