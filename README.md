@@ -223,6 +223,17 @@ LaunchedEffect(currentScreen) {
 
 This makes it easy to filter and analyze frame performance by screen in your observability backend.
 
+### Jank Metrics
+
+Jank events (frames taking longer than 16.67ms) are now recorded as a metric (`ui.jank.count`) instead of logs, reducing log clutter and making analysis easier.
+
+- The metric includes:
+  - `screen.name`: The current Activity, Fragment, or Compose screen
+  - All common attributes (e.g., user/session/app info)
+  - `frame.time.ns` and `frame.time.ms`: The duration of the jank frame
+
+You can now easily chart and alert on jank rates by screen and any attribute in your observability backend (e.g., Grafana, Prometheus).
+
 ## Local Development & Publishing
 
 ### Building the Library

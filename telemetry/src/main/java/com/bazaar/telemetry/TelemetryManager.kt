@@ -56,6 +56,7 @@ object TelemetryManager : TelemetryService {
     private lateinit var meter: io.opentelemetry.api.metrics.Meter
     private lateinit var logger: io.opentelemetry.api.logs.Logger
     private lateinit var requestCounter: io.opentelemetry.api.metrics.LongCounter
+    private lateinit var jankCounter: io.opentelemetry.api.metrics.LongCounter
 
     // Attributes to apply globally to every span/log/metric
     private var commonAttributes: Attributes = Attributes.empty()
@@ -190,6 +191,11 @@ object TelemetryManager : TelemetryService {
 
         requestCounter = meter.counterBuilder("http_client_request_count")
             .setDescription("Number of HTTP requests issued by the app")
+            .setUnit("1")
+            .build()
+
+        jankCounter = meter.counterBuilder("ui.jank.count")
+            .setDescription("Number of jank frames detected")
             .setUnit("1")
             .build()
 
@@ -478,14 +484,14 @@ object TelemetryManager : TelemetryService {
 
                     // Detect jank (frames taking longer than 16.67ms for 60fps)
                     if (frameTime > 16_666_667) {
-                        log(
-                            level = LogLevel.WARN,
-                            message = "Jank detected: frame took ${frameTime / 1_000_000}ms",
-                            attrs = Attributes.builder()
-                                .put("frame.time.ns", frameTime)
-                                .put("frame.time.ms", frameTime / 1_000_000)
-                                .build()
-                        )
+                        val attrs = Attributes.builder()
+                            .putAll(commonAttributes)
+                            .put("screen.name", currentScreenName)
+                            .put("frame.time.ns", frameTime)
+                            .put("frame.time.ms", frameTime / 1_000_000)
+                            .build()
+                        jankCounter.add(1, attrs.toOtelAttributes())
+                        // (No log to reduce clutter)
                     }
                 }
                 lastFrameTimeNanos = frameTimeNanos
