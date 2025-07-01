@@ -1,16 +1,16 @@
 package com.bazaar.telemetry
 
 import android.app.Application
-import android.os.Build
-import android.util.Log
-import android.os.Process
 import android.content.Context
 import android.os.BatteryManager
+import android.os.Build
+import android.os.Process
+import android.util.Log
 import androidx.annotation.RequiresApi
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.logs.LogRecordBuilder
-import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.api.metrics.ObservableLongGauge
+import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Scope
 import io.opentelemetry.exporter.otlp.logs.OtlpGrpcLogRecordExporter
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter
@@ -171,7 +171,7 @@ object TelemetryManager : TelemetryService {
             .setUnit("1")
             .buildWithCallback { measurement ->
                 val bm = application.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
-                if (bm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                if (bm != null) {
                     val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
                     if (level >= 0) measurement.record(level.toLong())
                 }
