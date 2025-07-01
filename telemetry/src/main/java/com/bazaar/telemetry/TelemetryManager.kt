@@ -1,12 +1,22 @@
 package com.bazaar.telemetry
 
+import android.Manifest
+import android.app.Activity
 import android.app.Application
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.TrafficStats
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Environment
 import android.os.Process
+import android.os.StatFs
 import android.util.Log
+import android.view.Choreographer
 import androidx.annotation.RequiresApi
+import androidx.annotation.RequiresPermission
+import com.bazaar.telemetry.TelemetryService.LogLevel
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.logs.LogRecordBuilder
 import io.opentelemetry.api.metrics.ObservableLongGauge
@@ -26,6 +36,7 @@ import io.opentelemetry.sdk.trace.export.BatchSpanProcessor
 import io.opentelemetry.semconv.ServiceAttributes
 import java.time.Duration
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Enhanced OpenTelemetry wrapper for Android apps.
@@ -49,14 +60,27 @@ object TelemetryManager : TelemetryService {
     // Attributes to apply globally to every span/log/metric
     private var commonAttributes: Attributes = Attributes.empty()
 
+    // Gauges for metrics
     private var memoryUsageGauge: ObservableLongGauge? = null
     private var cpuTimeGauge: ObservableLongGauge? = null
     private var uptimeGauge: ObservableLongGauge? = null
     private var batteryLevelGauge: ObservableLongGauge? = null
     private var threadCountGauge: ObservableLongGauge? = null
+    private var networkUsageGauge: ObservableLongGauge? = null
+    private var storageUsageGauge: ObservableLongGauge? = null
+    private var frameTimeGauge: ObservableLongGauge? = null
+    private var activeNetworkGauge: ObservableLongGauge? = null
+    private var appStateGauge: ObservableLongGauge? = null
+    private var screenDensityGauge: ObservableLongGauge? = null
+
+    // State tracking
     private var appStartTimeMs: Long = 0
     private var defaultExceptionHandler: Thread.UncaughtExceptionHandler? = null
+    private var activitiesStarted = 0
+    private var lastFrameTimeNanos = AtomicLong(0)
+    private var frameTimeCallback: Choreographer.FrameCallback? = null
 
+    @RequiresPermission(Manifest.permission.ACCESS_NETWORK_STATE)
     @RequiresApi(Build.VERSION_CODES.O)
     override fun init(
         application: Application,
@@ -185,19 +209,32 @@ object TelemetryManager : TelemetryService {
                 measurement.record(Thread.activeCount().toLong())
             }
 
+        // Setup additional metrics
+        setupNetworkMonitoring(application)
+        setupStorageMonitoring(application)
+        setupFrameMonitoring(application)
+        setupAppLifecycleMonitoring(application)
+
         // Install crash handler
         defaultExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             log(
-                level = TelemetryService.LogLevel.ERROR,
+                level = LogLevel.ERROR,
                 message = "Unhandled exception",
-                attrs = Attributes.builder().put("thread.name", t.name).build(),
+                attrs = Attributes.builder()
+                    .put("thread.name", t.name)
+                    .put("thread.priority", t.priority)
+                    .put("thread.id", t.id)
+                    .build(),
                 throwable = e
             )
             defaultExceptionHandler?.uncaughtException(t, e)
         }
 
-        Log.i("TelemetryManager", "OpenTelemetry initialized. Service: $serviceName, Version: $serviceVersion, Env: $environment")
+        Log.i(
+            "TelemetryManager",
+            "OpenTelemetry initialized. Service: $serviceName, Version: $serviceVersion, Env: $environment"
+        )
         Log.i("TelemetryManager", "Metrics OTLP endpoint: $otlpEndpoint, Export interval: 30s")
         Log.i("TelemetryManager", "Traces/Logs OTLP endpoint: $otlpEndpoint")
     }
@@ -216,11 +253,23 @@ object TelemetryManager : TelemetryService {
     override fun shutdown() {
         Log.i("TelemetryManager", "Shutting down TelemetryManager...")
         Thread.setDefaultUncaughtExceptionHandler(defaultExceptionHandler)
+
+        // Close all gauges
         memoryUsageGauge?.close()
         cpuTimeGauge?.close()
         uptimeGauge?.close()
         batteryLevelGauge?.close()
         threadCountGauge?.close()
+        networkUsageGauge?.close()
+        storageUsageGauge?.close()
+        frameTimeGauge?.close()
+        activeNetworkGauge?.close()
+        appStateGauge?.close()
+        screenDensityGauge?.close()
+
+        // Remove frame callback
+        frameTimeCallback?.let { Choreographer.getInstance().removeFrameCallback(it) }
+
         Log.d("TelemetryManager", "Shutting down TracerProvider.")
         tracerProvider.shutdown()
         Log.d("TelemetryManager", "Shutting down MeterProvider.")
@@ -255,7 +304,7 @@ object TelemetryManager : TelemetryService {
     }
 
     override fun log(
-        level: TelemetryService.LogLevel,
+        level: LogLevel,
         message: String,
         attrs: Attributes,
         throwable: Throwable?
@@ -267,14 +316,20 @@ object TelemetryManager : TelemetryService {
             .setAllAttributes(otelAttrs)
         if (throwable != null) {
             record.setAttribute(AttributeKey.stringKey("exception.type"), throwable.javaClass.name)
-            record.setAttribute(AttributeKey.stringKey("exception.message"), throwable.message ?: "")
-            record.setAttribute(AttributeKey.stringKey("exception.stacktrace"), Log.getStackTraceString(throwable))
+            record.setAttribute(
+                AttributeKey.stringKey("exception.message"),
+                throwable.message ?: ""
+            )
+            record.setAttribute(
+                AttributeKey.stringKey("exception.stacktrace"),
+                Log.getStackTraceString(throwable)
+            )
         }
         when (level) {
-            TelemetryService.LogLevel.DEBUG -> record.setSeverity(io.opentelemetry.api.logs.Severity.DEBUG)
-            TelemetryService.LogLevel.INFO -> record.setSeverity(io.opentelemetry.api.logs.Severity.INFO)
-            TelemetryService.LogLevel.WARN -> record.setSeverity(io.opentelemetry.api.logs.Severity.WARN)
-            TelemetryService.LogLevel.ERROR -> record.setSeverity(io.opentelemetry.api.logs.Severity.ERROR)
+            LogLevel.DEBUG -> record.setSeverity(io.opentelemetry.api.logs.Severity.DEBUG)
+            LogLevel.INFO -> record.setSeverity(io.opentelemetry.api.logs.Severity.INFO)
+            LogLevel.WARN -> record.setSeverity(io.opentelemetry.api.logs.Severity.WARN)
+            LogLevel.ERROR -> record.setSeverity(io.opentelemetry.api.logs.Severity.ERROR)
         }
         record.emit()
     }
@@ -285,7 +340,191 @@ object TelemetryManager : TelemetryService {
     ) {
         val mergedAttrs = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
         val otelAttrs = mergedAttrs.toOtelAttributes()
-        Log.d("TelemetryManager", "incRequestCount called. Amount: $amount, Attributes: $otelAttrs, Common Attributes: ${commonAttributes.toOtelAttributes()}")
+        Log.d(
+            "TelemetryManager",
+            "incRequestCount called. Amount: $amount, Attributes: $otelAttrs, Common Attributes: ${commonAttributes.toOtelAttributes()}"
+        )
         requestCounter.add(amount, otelAttrs)
+    }
+
+    // Region: Private helper methods for metrics collection
+
+    @RequiresApi(Build.VERSION_CODES.M)
+    @RequiresPermission(Manifest.permission.ACCESS_NETWORK_STATE)
+    private fun setupNetworkMonitoring(context: Context) {
+        // Network usage (bytes transferred)
+        networkUsageGauge = meter.gaugeBuilder("network.bytes.transferred")
+            .setDescription("Network bytes transferred (sent + received)")
+            .setUnit("bytes")
+            .ofLongs()
+            .buildWithCallback { measurement ->
+                val bytes = getNetworkBytesTransferred()
+                if (bytes >= 0) {
+                    measurement.record(bytes)
+                }
+            }
+
+        // Active network type
+        activeNetworkGauge = meter.gaugeBuilder("network.active")
+            .setDescription("Active network type (0=none, 1=mobile, 2=wifi, 3=ethernet, 4=other)")
+            .ofLongs()
+            .buildWithCallback { measurement ->
+                val networkType = getActiveNetworkType(context)
+                measurement.record(networkType.toLong())
+            }
+    }
+
+    private fun setupStorageMonitoring(context: Context) {
+        storageUsageGauge = meter.gaugeBuilder("storage.used.bytes")
+            .setDescription("Used storage space in bytes")
+            .setUnit("bytes")
+            .ofLongs()
+            .buildWithCallback { measurement ->
+                val usedSpace = getUsedStorageSpace(context)
+                if (usedSpace >= 0) {
+                    measurement.record(usedSpace)
+                }
+            }
+    }
+
+    private fun setupFrameMonitoring(context: Context) {
+        // Frame time monitoring using Choreographer
+        frameTimeGauge = meter.gaugeBuilder("ui.frame.time")
+            .setDescription("Frame render time in nanoseconds")
+            .setUnit("ns")
+            .ofLongs()
+            .buildWithCallback { measurement ->
+                val frameTime = lastFrameTimeNanos.get()
+                if (frameTime > 0) {
+                    measurement.record(frameTime)
+                }
+            }
+        // Set up frame callback to measure frame times
+        frameTimeCallback = object : Choreographer.FrameCallback {
+            private var lastFrameTimeNanos: Long = 0
+
+            override fun doFrame(frameTimeNanos: Long) {
+                if (lastFrameTimeNanos > 0) {
+                    val frameTime = frameTimeNanos - lastFrameTimeNanos
+                    this@TelemetryManager.lastFrameTimeNanos.set(frameTime)
+
+                    // Detect jank (frames taking longer than 16.67ms for 60fps)
+                    if (frameTime > 16_666_667) {
+                        log(
+                            level = LogLevel.WARN,
+                            message = "Jank detected: frame took ${frameTime / 1_000_000}ms",
+                            attrs = Attributes.builder()
+                                .put("frame.time.ns", frameTime)
+                                .put("frame.time.ms", frameTime / 1_000_000)
+                                .build()
+                        )
+                    }
+                }
+                lastFrameTimeNanos = frameTimeNanos
+                Choreographer.getInstance().postFrameCallback(this)
+            }
+        }
+
+        // Start frame time monitoring
+        Choreographer.getInstance().postFrameCallback(frameTimeCallback!!)
+    }
+
+    private fun setupAppLifecycleMonitoring(application: Application) {
+        // App state (foreground/background)
+        appStateGauge = meter.gaugeBuilder("app.state")
+            .setDescription("App state (0=background, 1=foreground)")
+            .ofLongs()
+            .buildWithCallback { measurement ->
+                measurement.record(if (activitiesStarted > 0) 1L else 0L)
+            }
+
+        // Screen density
+        screenDensityGauge = meter.gaugeBuilder("device.screen.density")
+            .setDescription("Screen density in DPI")
+            .ofLongs()
+            .buildWithCallback { measurement ->
+                val metrics = application.resources.displayMetrics
+                measurement.record(metrics.densityDpi.toLong())
+            }
+
+        // Register activity lifecycle callbacks
+        application.registerActivityLifecycleCallbacks(object :
+            Application.ActivityLifecycleCallbacks {
+            override fun onActivityCreated(
+                activity: Activity,
+                savedInstanceState: android.os.Bundle?
+            ) {
+            }
+
+            override fun onActivityStarted(activity: Activity) {
+                if (activitiesStarted == 0) {
+                    // App came to foreground
+                    log(LogLevel.INFO, "App came to foreground")
+                }
+                activitiesStarted++
+            }
+
+            override fun onActivityResumed(activity: Activity) {}
+            override fun onActivityPaused(activity: Activity) {}
+
+            override fun onActivityStopped(activity: Activity) {
+                activitiesStarted--
+                if (activitiesStarted == 0) {
+                    // App went to background
+                    log(LogLevel.INFO, "App went to background")
+                }
+            }
+
+            override fun onActivitySaveInstanceState(
+                activity: Activity,
+                outState: android.os.Bundle
+            ) {
+            }
+
+            override fun onActivityDestroyed(activity: Activity) {}
+        })
+    }
+
+    @RequiresApi(Build.VERSION_CODES.M)
+    @RequiresPermission(allOf = [Manifest.permission.ACCESS_NETWORK_STATE])
+    private fun getActiveNetworkType(context: Context): Int {
+        return try {
+            val connectivityManager =
+                context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+            val network = connectivityManager?.activeNetwork ?: return 0
+            val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return 0
+
+            when {
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 2
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> 1
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 3
+                else -> 4 // Other
+            }
+        } catch (e: Exception) {
+            log(LogLevel.ERROR, "Failed to get network type", throwable = e)
+            0
+        }
+    }
+
+    private fun getNetworkBytesTransferred(): Long {
+        return try {
+            TrafficStats.getTotalRxBytes() + TrafficStats.getTotalTxBytes()
+        } catch (e: Exception) {
+            log(LogLevel.ERROR, "Failed to get network bytes transferred", throwable = e)
+            -1
+        }
+    }
+
+    private fun getUsedStorageSpace(context: Context): Long {
+        return try {
+            val stat = StatFs(Environment.getDataDirectory().path)
+            val blockSize = stat.blockSizeLong
+            val totalBlocks = stat.blockCountLong
+            val availableBlocks = stat.availableBlocksLong
+            (totalBlocks - availableBlocks) * blockSize
+        } catch (e: Exception) {
+            log(LogLevel.ERROR, "Failed to get storage usage", throwable = e)
+            -1
+        }
     }
 }
