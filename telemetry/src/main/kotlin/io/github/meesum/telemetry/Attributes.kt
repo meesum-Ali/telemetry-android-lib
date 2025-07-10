@@ -1,4 +1,4 @@
-package com.bazaar.telemetry
+package io.github.meesum.telemetry
 
 class Attributes private constructor(private val attributesMap: Map<String, Any>) {
 

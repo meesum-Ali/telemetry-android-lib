@@ -1,4 +1,4 @@
-package com.bazaar.telemetry
+package io.github.meesum.telemetry
 
 import android.Manifest
 import android.app.Activity
@@ -9,6 +9,7 @@ import android.net.NetworkCapabilities
 import android.net.TrafficStats
 import android.os.BatteryManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Environment
 import android.os.Process
 import android.os.StatFs
@@ -16,10 +17,17 @@ import android.util.Log
 import android.view.Choreographer
 import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresPermission
-import com.bazaar.telemetry.TelemetryService.LogLevel
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.FragmentActivity
+import androidx.fragment.app.FragmentManager
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.logs.LogRecordBuilder
+import io.opentelemetry.api.logs.Logger
+import io.opentelemetry.api.logs.Severity
+import io.opentelemetry.api.metrics.LongCounter
+import io.opentelemetry.api.metrics.Meter
 import io.opentelemetry.api.metrics.ObservableLongGauge
+import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.context.Scope
 import io.opentelemetry.exporter.otlp.logs.OtlpGrpcLogRecordExporter
@@ -28,12 +36,17 @@ import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter
 import io.opentelemetry.sdk.OpenTelemetrySdk
 import io.opentelemetry.sdk.logs.SdkLoggerProvider
 import io.opentelemetry.sdk.logs.export.BatchLogRecordProcessor
+import io.opentelemetry.sdk.logs.export.LogRecordExporter
 import io.opentelemetry.sdk.metrics.SdkMeterProvider
+import io.opentelemetry.sdk.metrics.export.MetricExporter
 import io.opentelemetry.sdk.metrics.export.PeriodicMetricReader
 import io.opentelemetry.sdk.resources.Resource
 import io.opentelemetry.sdk.trace.SdkTracerProvider
 import io.opentelemetry.sdk.trace.export.BatchSpanProcessor
+import io.opentelemetry.sdk.trace.export.SpanExporter
 import io.opentelemetry.semconv.ServiceAttributes
+import okhttp3.Interceptor
+import okhttp3.Response
 import java.time.Duration
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
@@ -53,10 +66,10 @@ object TelemetryManager : TelemetryService {
     private lateinit var loggerProvider: SdkLoggerProvider
 
     private lateinit var tracer: Tracer
-    private lateinit var meter: io.opentelemetry.api.metrics.Meter
-    private lateinit var logger: io.opentelemetry.api.logs.Logger
-    private lateinit var requestCounter: io.opentelemetry.api.metrics.LongCounter
-    private lateinit var jankCounter: io.opentelemetry.api.metrics.LongCounter
+    private lateinit var meter: Meter
+    private lateinit var logger: Logger
+    private lateinit var requestCounter: LongCounter
+    private lateinit var jankCounter: LongCounter
 
     // Attributes to apply globally to every span/log/metric
     private var commonAttributes: Attributes = Attributes.empty()
@@ -120,7 +133,7 @@ object TelemetryManager : TelemetryService {
         )
 
         // Helper to build exporter from config
-        fun buildSpanExporter(cfg: TelemetryExporterConfig?): io.opentelemetry.sdk.trace.export.SpanExporter {
+        fun buildSpanExporter(cfg: TelemetryExporterConfig?): SpanExporter {
             val c = cfg ?: TelemetryExporterConfig(otlpEndpoint, headers)
             return when (c.type) {
                 TelemetryExporterConfig.ExporterType.OTLP_GRPC -> OtlpGrpcSpanExporter.builder()
@@ -129,7 +142,7 @@ object TelemetryManager : TelemetryService {
                     .build()
             }
         }
-        fun buildMetricExporter(cfg: TelemetryExporterConfig?): io.opentelemetry.sdk.metrics.export.MetricExporter {
+        fun buildMetricExporter(cfg: TelemetryExporterConfig?): MetricExporter {
             val c = cfg ?: TelemetryExporterConfig(otlpEndpoint, headers)
             return when (c.type) {
                 TelemetryExporterConfig.ExporterType.OTLP_GRPC -> OtlpGrpcMetricExporter.builder()
@@ -138,7 +151,7 @@ object TelemetryManager : TelemetryService {
                     .build()
             }
         }
-        fun buildLogExporter(cfg: TelemetryExporterConfig?): io.opentelemetry.sdk.logs.export.LogRecordExporter {
+        fun buildLogExporter(cfg: TelemetryExporterConfig?): LogRecordExporter {
             val c = cfg ?: TelemetryExporterConfig(otlpEndpoint, headers)
             return when (c.type) {
                 TelemetryExporterConfig.ExporterType.OTLP_GRPC -> OtlpGrpcLogRecordExporter.builder()
@@ -255,13 +268,13 @@ object TelemetryManager : TelemetryService {
         // Auto-instrument activities if requested
         if (autoInstrumentActivities) {
             application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
-                private var currentSpan: io.opentelemetry.api.trace.Span? = null
-                override fun onActivityCreated(activity: Activity, savedInstanceState: android.os.Bundle?) {
+                private var currentSpan: Span? = null
+                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                     // Register fragment lifecycle for screen tracking if possible
-                    if (activity is androidx.fragment.app.FragmentActivity) {
+                    if (activity is FragmentActivity) {
                         activity.supportFragmentManager.registerFragmentLifecycleCallbacks(
-                            object : androidx.fragment.app.FragmentManager.FragmentLifecycleCallbacks() {
-                                override fun onFragmentResumed(fm: androidx.fragment.app.FragmentManager, fragment: androidx.fragment.app.Fragment) {
+                            object : FragmentManager.FragmentLifecycleCallbacks() {
+                                override fun onFragmentResumed(fm: FragmentManager, fragment: Fragment) {
                                     currentScreenName = fragment.javaClass.simpleName
                                 }
                             }, true
@@ -280,7 +293,7 @@ object TelemetryManager : TelemetryService {
                     currentSpan?.end()
                     currentSpan = null
                 }
-                override fun onActivitySaveInstanceState(activity: Activity, outState: android.os.Bundle) {}
+                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
                 override fun onActivityDestroyed(activity: Activity) {}
             })
         }
@@ -289,7 +302,7 @@ object TelemetryManager : TelemetryService {
         defaultExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             log(
-                level = LogLevel.ERROR,
+                level = TelemetryService.LogLevel.ERROR,
                 message = "Unhandled exception",
                 attrs = Attributes.builder()
                     .put("thread.name", t.name)
@@ -374,7 +387,7 @@ object TelemetryManager : TelemetryService {
     }
 
     override fun log(
-        level: LogLevel,
+        level: TelemetryService.LogLevel,
         message: String,
         attrs: Attributes,
         throwable: Throwable?
@@ -396,10 +409,10 @@ object TelemetryManager : TelemetryService {
             )
         }
         when (level) {
-            LogLevel.DEBUG -> record.setSeverity(io.opentelemetry.api.logs.Severity.DEBUG)
-            LogLevel.INFO -> record.setSeverity(io.opentelemetry.api.logs.Severity.INFO)
-            LogLevel.WARN -> record.setSeverity(io.opentelemetry.api.logs.Severity.WARN)
-            LogLevel.ERROR -> record.setSeverity(io.opentelemetry.api.logs.Severity.ERROR)
+            TelemetryService.LogLevel.DEBUG -> record.setSeverity(Severity.DEBUG)
+            TelemetryService.LogLevel.INFO -> record.setSeverity(Severity.INFO)
+            TelemetryService.LogLevel.WARN -> record.setSeverity(Severity.WARN)
+            TelemetryService.LogLevel.ERROR -> record.setSeverity(Severity.ERROR)
         }
         record.emit()
     }
@@ -526,14 +539,14 @@ object TelemetryManager : TelemetryService {
             Application.ActivityLifecycleCallbacks {
             override fun onActivityCreated(
                 activity: Activity,
-                savedInstanceState: android.os.Bundle?
+                savedInstanceState: Bundle?
             ) {
             }
 
             override fun onActivityStarted(activity: Activity) {
                 if (activitiesStarted == 0) {
                     // App came to foreground
-                    log(LogLevel.INFO, "App came to foreground")
+                    log(TelemetryService.LogLevel.INFO, "App came to foreground")
                 }
                 activitiesStarted++
             }
@@ -545,13 +558,13 @@ object TelemetryManager : TelemetryService {
                 activitiesStarted--
                 if (activitiesStarted == 0) {
                     // App went to background
-                    log(LogLevel.INFO, "App went to background")
+                    log(TelemetryService.LogLevel.INFO, "App went to background")
                 }
             }
 
             override fun onActivitySaveInstanceState(
                 activity: Activity,
-                outState: android.os.Bundle
+                outState: Bundle
             ) {
             }
 
@@ -575,7 +588,7 @@ object TelemetryManager : TelemetryService {
                 else -> 4 // Other
             }
         } catch (e: Exception) {
-            log(LogLevel.ERROR, "Failed to get network type", throwable = e)
+            log(TelemetryService.LogLevel.ERROR, "Failed to get network type", throwable = e)
             0
         }
     }
@@ -584,7 +597,7 @@ object TelemetryManager : TelemetryService {
         return try {
             TrafficStats.getTotalRxBytes() + TrafficStats.getTotalTxBytes()
         } catch (e: Exception) {
-            log(LogLevel.ERROR, "Failed to get network bytes transferred", throwable = e)
+            log(TelemetryService.LogLevel.ERROR, "Failed to get network bytes transferred", throwable = e)
             -1
         }
     }
@@ -597,7 +610,7 @@ object TelemetryManager : TelemetryService {
             val availableBlocks = stat.availableBlocksLong
             (totalBlocks - availableBlocks) * blockSize
         } catch (e: Exception) {
-            log(LogLevel.ERROR, "Failed to get storage usage", throwable = e)
+            log(TelemetryService.LogLevel.ERROR, "Failed to get storage usage", throwable = e)
             -1
         }
     }
@@ -605,8 +618,8 @@ object TelemetryManager : TelemetryService {
     /**
      * OkHttp Interceptor for automatic network request tracing and metrics.
      */
-    class OkHttpTelemetryInterceptor : okhttp3.Interceptor {
-        override fun intercept(chain: okhttp3.Interceptor.Chain): okhttp3.Response {
+    class OkHttpTelemetryInterceptor : Interceptor {
+        override fun intercept(chain: Interceptor.Chain): Response {
             val request = chain.request()
             val span = tracer.spanBuilder("HTTP ${request.method} ${request.url.encodedPath}")
                 .setAttribute("http.method", request.method)
@@ -631,5 +644,5 @@ object TelemetryManager : TelemetryService {
      * Returns an OkHttp Interceptor for automatic network request tracing/metrics.
      */
     @JvmStatic
-    fun createOkHttpInterceptor(): okhttp3.Interceptor = OkHttpTelemetryInterceptor()
+    fun createOkHttpInterceptor(): Interceptor = OkHttpTelemetryInterceptor()
 }

@@ -1,4 +1,4 @@
-package com.bazaar.telemetry
+package io.github.meesum.telemetry
 
 import android.app.Application
 
