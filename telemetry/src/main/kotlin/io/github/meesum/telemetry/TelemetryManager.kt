@@ -463,9 +463,10 @@ object TelemetryManager : TelemetryService {
         attrs: Attributes
     ) {
 
+        val extraAttributesJson = attrs.toJsonString()
         val mergedAttrs = Attributes.builder()
             .putAll(commonAttributes)
-            .putAll(attrs)
+            .put("event.attrs", extraAttributesJson)
             .put("event.name", name)
             .build()
 

@@ -1,7 +1,12 @@
 package io.github.meesum.telemetry
 
+import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
+
 class Attributes private constructor(private val attributesMap: Map<String, Any>) {
 
+    val json = Json { prettyPrint = true }
     fun getString(key: String): String? = attributesMap[key] as? String
     fun getInt(key: String): Int? = attributesMap[key] as? Int
     fun getLong(key: String): Long? = attributesMap[key] as? Long
@@ -13,13 +18,29 @@ class Attributes private constructor(private val attributesMap: Map<String, Any>
         attributesMap.forEach { (key, value) ->
             when (value) {
                 is String -> builder.put(key, value)
-                is Int -> builder.put(key, value.toLong()) // OpenTelemetry AttributeKey uses Long for integers
+                is Int -> builder.put(
+                    key,
+                    value.toLong()
+                ) // OpenTelemetry AttributeKey uses Long for integers
                 is Long -> builder.put(key, value)
                 is Double -> builder.put(key, value)
                 is Boolean -> builder.put(key, value)
             }
         }
         return builder.build()
+    }
+
+    internal fun toJsonString(): String {
+        val newMap = attributesMap.map { (key, value) ->
+            key to value.toString()
+        }.toMap()
+
+        return json.encodeToString(
+            value = newMap, serializer = MapSerializer(
+                keySerializer = String.serializer(),
+                valueSerializer = String.serializer()
+            )
+        )
     }
 
     class Builder {
