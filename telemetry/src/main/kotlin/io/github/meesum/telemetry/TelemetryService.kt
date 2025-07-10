@@ -40,6 +40,12 @@ interface TelemetryService {
         amount: Long = 1,
         attrs: Attributes = Attributes.empty()
     )
+
+    fun incEventCount(
+        name: String,
+        amount: Long = 1,
+        attrs: Attributes = Attributes.empty()
+    )
 }
 
 // Exporter config abstractions for minimal user input

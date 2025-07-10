@@ -70,6 +70,7 @@ object TelemetryManager : TelemetryService {
     private lateinit var logger: Logger
     private lateinit var requestCounter: LongCounter
     private lateinit var jankCounter: LongCounter
+    private lateinit var eventCounter: LongCounter
 
     // Attributes to apply globally to every span/log/metric
     private var commonAttributes: Attributes = Attributes.empty()
@@ -142,6 +143,7 @@ object TelemetryManager : TelemetryService {
                     .build()
             }
         }
+
         fun buildMetricExporter(cfg: TelemetryExporterConfig?): MetricExporter {
             val c = cfg ?: TelemetryExporterConfig(otlpEndpoint, headers)
             return when (c.type) {
@@ -151,6 +153,7 @@ object TelemetryManager : TelemetryService {
                     .build()
             }
         }
+
         fun buildLogExporter(cfg: TelemetryExporterConfig?): LogRecordExporter {
             val c = cfg ?: TelemetryExporterConfig(otlpEndpoint, headers)
             return when (c.type) {
@@ -212,6 +215,11 @@ object TelemetryManager : TelemetryService {
             .setUnit("1")
             .build()
 
+        eventCounter = meter.counterBuilder("app_event_count")
+            .setDescription("Number of events")
+            .setUnit("1")
+            .build()
+
         // Setup gauges for app vitals
         memoryUsageGauge = meter.gaugeBuilder("app_memory_usage_bytes")
             .ofLongs()
@@ -236,7 +244,10 @@ object TelemetryManager : TelemetryService {
             .setDescription("App uptime in ms")
             .setUnit("ms")
             .buildWithCallback { measurement ->
-                measurement.record(System.currentTimeMillis() - appStartTimeMs, commonAttributes.toOtelAttributes())
+                measurement.record(
+                    System.currentTimeMillis() - appStartTimeMs,
+                    commonAttributes.toOtelAttributes()
+                )
             }
 
         batteryLevelGauge = meter.gaugeBuilder("device_battery_percent")
@@ -247,7 +258,10 @@ object TelemetryManager : TelemetryService {
                 val bm = application.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
                 if (bm != null) {
                     val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-                    if (level >= 0) measurement.record(level.toLong(), commonAttributes.toOtelAttributes())
+                    if (level >= 0) measurement.record(
+                        level.toLong(),
+                        commonAttributes.toOtelAttributes()
+                    )
                 }
             }
 
@@ -256,7 +270,10 @@ object TelemetryManager : TelemetryService {
             .setDescription("Number of active threads in the app")
             .setUnit("1")
             .buildWithCallback { measurement ->
-                measurement.record(Thread.activeCount().toLong(), commonAttributes.toOtelAttributes())
+                measurement.record(
+                    Thread.activeCount().toLong(),
+                    commonAttributes.toOtelAttributes()
+                )
             }
 
         // Setup additional metrics
@@ -267,32 +284,42 @@ object TelemetryManager : TelemetryService {
 
         // Auto-instrument activities if requested
         if (autoInstrumentActivities) {
-            application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+            application.registerActivityLifecycleCallbacks(object :
+                Application.ActivityLifecycleCallbacks {
                 private var currentSpan: Span? = null
                 override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
                     // Register fragment lifecycle for screen tracking if possible
                     if (activity is FragmentActivity) {
                         activity.supportFragmentManager.registerFragmentLifecycleCallbacks(
                             object : FragmentManager.FragmentLifecycleCallbacks() {
-                                override fun onFragmentResumed(fm: FragmentManager, fragment: Fragment) {
+                                override fun onFragmentResumed(
+                                    fm: FragmentManager,
+                                    fragment: Fragment
+                                ) {
                                     currentScreenName = fragment.javaClass.simpleName
                                 }
                             }, true
                         )
                     }
                 }
+
                 override fun onActivityStarted(activity: Activity) {
-                    currentSpan = tracer.spanBuilder("ActivityStarted:${activity.javaClass.simpleName}").startSpan()
+                    currentSpan =
+                        tracer.spanBuilder("ActivityStarted:${activity.javaClass.simpleName}")
+                            .startSpan()
                     currentSpan?.makeCurrent()
                 }
+
                 override fun onActivityResumed(activity: Activity) {
                     currentScreenName = activity.javaClass.simpleName
                 }
+
                 override fun onActivityPaused(activity: Activity) {}
                 override fun onActivityStopped(activity: Activity) {
                     currentSpan?.end()
                     currentSpan = null
                 }
+
                 override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
                 override fun onActivityDestroyed(activity: Activity) {}
             })
@@ -430,6 +457,29 @@ object TelemetryManager : TelemetryService {
         requestCounter.add(amount, otelAttrs)
     }
 
+    override fun incEventCount(
+        name: String,
+        amount: Long,
+        attrs: Attributes
+    ) {
+
+        val mergedAttrs = Attributes.builder()
+            .putAll(commonAttributes)
+            .putAll(attrs)
+            .put("event.name", name)
+            .build()
+
+        val otelAttrs = mergedAttrs.toOtelAttributes()
+
+        Log.d(
+            "TelemetryManager",
+            "incEventCount called. Name: $name, Amount: $amount, Attributes: $otelAttrs, Common Attributes: ${commonAttributes.toOtelAttributes()}"
+        )
+
+        eventCounter.add(amount, otelAttrs)
+
+    }
+
     // Region: Private helper methods for metrics collection
 
     @RequiresApi(Build.VERSION_CODES.M)
@@ -522,7 +572,10 @@ object TelemetryManager : TelemetryService {
             .setDescription("App state (0=background, 1=foreground)")
             .ofLongs()
             .buildWithCallback { measurement ->
-                measurement.record(if (activitiesStarted > 0) 1L else 0L, commonAttributes.toOtelAttributes())
+                measurement.record(
+                    if (activitiesStarted > 0) 1L else 0L,
+                    commonAttributes.toOtelAttributes()
+                )
             }
 
         // Screen density
@@ -597,7 +650,11 @@ object TelemetryManager : TelemetryService {
         return try {
             TrafficStats.getTotalRxBytes() + TrafficStats.getTotalTxBytes()
         } catch (e: Exception) {
-            log(TelemetryService.LogLevel.ERROR, "Failed to get network bytes transferred", throwable = e)
+            log(
+                TelemetryService.LogLevel.ERROR,
+                "Failed to get network bytes transferred",
+                throwable = e
+            )
             -1
         }
     }
