@@ -15,6 +15,8 @@ A lightweight Android library that provides a simple wrapper around OpenTelemetr
 - 🧩 **Custom Exporters**: Plug in your own OpenTelemetry exporters
 - ⚡ **Automatic Activity Instrumentation**: Optionally trace Activity lifecycle automatically
 - 🌐 **Network Request Monitoring**: OkHttp interceptor for automatic HTTP tracing/metrics
+- 🎯 **Custom Event Tracking**: Track business events and user interactions with structured attributes
+- 🎨 **UI Performance Monitoring**: Frame time metrics and jank detection with screen-level granularity
 
 ## Installation
 
@@ -47,7 +49,7 @@ dependencyResolutionManagement {
 ```kotlin
 dependencies {
     // TODO: Replace with the correct groupId, artifactId and version after publishing
-    implementation("io.github.meesum.telemetry:telemetry:1.0.0")
+    implementation("io.github.meesum.telemetry:telemetry:1.1.2")
 }
 ```
 
@@ -96,6 +98,15 @@ TelemetryManager.span("user_login") {
 
 // Increment a counter
 TelemetryManager.incRequestCount()
+
+// Track custom events
+TelemetryManager.incEventCount(
+    name = "user_action",
+    attrs = Attributes.builder()
+        .put("action_type", "button_click")
+        .put("screen", "home")
+        .build()
+)
 ```
 
 ## Advanced Usage
@@ -222,6 +233,39 @@ LaunchedEffect(currentScreen) {
 ```
 
 This makes it easy to filter and analyze frame performance by screen in your observability backend.
+
+### Custom Event Tracking
+
+Track custom application events with structured attributes:
+
+```kotlin
+// Track user interactions
+TelemetryManager.incEventCount(
+    name = "user_login",
+    attrs = Attributes.builder()
+        .put("method", "email")
+        .put("success", true)
+        .put("duration_ms", 1250)
+        .build()
+)
+
+// Track business events
+TelemetryManager.incEventCount(
+    name = "purchase_completed",
+    attrs = Attributes.builder()
+        .put("product_id", "ABC123")
+        .put("amount", 29.99)
+        .put("currency", "USD")
+        .build()
+)
+```
+
+Custom event attributes are automatically serialized as JSON and included in the `app_event_count` metric with:
+- `event.name`: The event name you specified
+- `event.attrs`: JSON string containing all custom attributes
+- All common attributes (user/session/app info)
+
+This makes it easy to track and analyze user behavior, business metrics, and custom application events in your observability backend.
 
 ### Jank Metrics
 
@@ -359,5 +403,9 @@ For support, please open an issue in the GitHub repository.
 - [x] Support for custom exporters (minimal config, no OpenTelemetry types in API)
 - [x] Automatic activity/fragment instrumentation (Activity supported)
 - [x] Network request monitoring (OkHttp supported)
+- [x] Custom event tracking with structured attributes
+- [x] UI performance monitoring with screen-level granularity
+- [x] Jank detection and metrics
 - [ ] Automatic fragment instrumentation
 - [ ] User-defined custom metrics API
+- [ ] Performance profiling integration
