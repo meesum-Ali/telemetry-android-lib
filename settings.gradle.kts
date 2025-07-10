@@ -9,8 +9,8 @@ pluginManagement {
     plugins {
         // centralise all plugin versions here
         id("com.android.library")                     version "8.3.1"
-        kotlin("android")                             version "1.9.23"
-        id("org.jetbrains.kotlin.plugin.serialization") version "1.9.23"
+        kotlin("android")                             version "2.0.21"
+        id("org.jetbrains.kotlin.plugin.serialization") version "2.0.21"
     }
 }
 

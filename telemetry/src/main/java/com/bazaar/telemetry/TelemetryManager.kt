@@ -247,7 +247,7 @@ object TelemetryManager : TelemetryService {
             }
 
         // Setup additional metrics
-        setupNetworkMonitoring(application)
+        setupNetworkMonitoring(context = application)
         setupStorageMonitoring(application)
         setupFrameMonitoring(application)
         setupAppLifecycleMonitoring(application)

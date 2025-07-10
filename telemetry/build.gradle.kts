@@ -26,8 +26,8 @@ fun getGithubProperty(key: String): String? {
 
 plugins {
     id("com.android.library")
-    kotlin("android")
-    kotlin("plugin.serialization")
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.serialization)
     id("maven-publish")
 }
 
@@ -55,39 +55,30 @@ android {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
-    kotlin { jvmToolchain(21) }
 }
 
 /* ───────── Deps ───────── */
 dependencies {
-    // keep every OTEL lib on the same version via the BOM
-    implementation(platform("io.opentelemetry:opentelemetry-bom:1.49.0"))
-    implementation("io.opentelemetry:opentelemetry-api")
+    implementation(platform(libs.opentelemetry.bom))
+    implementation(libs.opentelemetry.api)
+    implementation(libs.opentelemetry.sdk)
+    implementation(libs.opentelemetry.semconv)
+    implementation(libs.opentelemetry.exporter.otlp)
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.grpc.okhttp)
+    implementation(libs.okhttp)
+    implementation(libs.androidx.fragment.ktx)
 
-    implementation("io.opentelemetry:opentelemetry-api")
-    implementation("io.opentelemetry:opentelemetry-sdk")
-
-    implementation("io.opentelemetry.semconv:opentelemetry-semconv:1.34.0")
-
-    // single gRPC exporter → supplies Span/Metric/Log exporters
-    implementation("io.opentelemetry:opentelemetry-exporter-otlp")
-
-    implementation("androidx.core:core-ktx:1.7.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.4.2")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.5.1")
-    implementation("io.grpc:grpc-okhttp:1.63.0")
-
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("androidx.fragment:fragment-ktx:1.8.8")
-
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("org.mockito:mockito-core:3.12.4")
-    testImplementation("org.mockito.kotlin:mockito-kotlin:3.2.0") // For Kotlin-specific syntax
-    testImplementation("io.opentelemetry:opentelemetry-sdk-testing:1.49.0") // For testing OpenTelemetry
-    testImplementation("org.robolectric:robolectric:4.11.1")
-    testImplementation("androidx.test:core:1.5.0")
-    testImplementation("androidx.test.ext:junit:1.1.5") // For AndroidX JUnit extension
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3") // For testing coroutines
+    testImplementation(libs.junit)
+    testImplementation(libs.mockito.core)
+    testImplementation(libs.mockito.kotlin)
+    testImplementation(libs.opentelemetry.sdk.testing)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.androidx.test.ext.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
 
 android { // Add this block to configure Robolectric
