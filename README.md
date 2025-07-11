@@ -251,6 +251,137 @@ val client = OkHttpClient.Builder()
     .build()
 ```
 
+---
+
+### Network Tracing with Other HTTP Clients
+
+> **Note:** Android does not provide a universal way to intercept all network requests at the app level. Only OkHttp is supported automatically. For other HTTP clients, use manual tracing as shown below.
+
+#### Manual Network Tracing (Any HTTP Client)
+
+You can trace any network request, regardless of the HTTP client, using the raw TelemetryManager APIs:
+
+```kotlin
+val span = TelemetryManager.startSpan("HTTP GET $url")
+try {
+    // Perform your network request here (e.g., HttpURLConnection, Ktor, etc.)
+    val response = ... // your network call
+    // Optionally record status code or other attributes
+    // TelemetryManager.addAttribute(span, "http.status_code", response.code)
+} catch (e: Exception) {
+    TelemetryManager.log(
+        TelemetryService.LogLevel.ERROR,
+        "Network request failed",
+        throwable = e
+    )
+    throw e
+} finally {
+    TelemetryManager.endSpan(span)
+}
+```
+
+#### Retrofit
+
+Retrofit uses OkHttp under the hood, so just add the interceptor to your OkHttpClient:
+
+```kotlin
+val okHttpClient = OkHttpClient.Builder()
+    .addInterceptor(TelemetryManager.createOkHttpInterceptor())
+    .build()
+
+val retrofit = Retrofit.Builder()
+    .baseUrl("https://api.example.com/")
+    .client(okHttpClient)
+    .build()
+```
+
+#### HttpURLConnection (Manual)
+
+For apps using `HttpURLConnection`, use manual tracing:
+
+```kotlin
+val url = URL("https://api.example.com/data")
+val span = TelemetryManager.startSpan("HTTP GET ${url.path}")
+try {
+    val connection = url.openConnection() as HttpURLConnection
+    connection.requestMethod = "GET"
+    val responseCode = connection.responseCode
+    // Optionally record status code
+    // TelemetryManager.addAttribute(span, "http.status_code", responseCode)
+    // ... read response ...
+} catch (e: Exception) {
+    TelemetryManager.log(
+        TelemetryService.LogLevel.ERROR,
+        "HttpURLConnection failed",
+        throwable = e
+    )
+    throw e
+} finally {
+    TelemetryManager.endSpan(span)
+}
+```
+
+#### Ktor Client (Manual)
+
+For Ktor, you can use manual tracing in your request pipeline:
+
+```kotlin
+val span = TelemetryManager.startSpan("HTTP GET $url")
+try {
+    val response = client.get(url)
+    // Optionally record status code
+    // TelemetryManager.addAttribute(span, "http.status_code", response.status.value)
+} catch (e: Exception) {
+    TelemetryManager.log(
+        TelemetryService.LogLevel.ERROR,
+        "Ktor request failed",
+        throwable = e
+    )
+    throw e
+} finally {
+    TelemetryManager.endSpan(span)
+}
+```
+
+#### Volley (Manual)
+
+Volley does not support interceptors, so use manual tracing:
+
+```kotlin
+val span = TelemetryManager.startSpan("HTTP GET $url")
+val request = StringRequest(Request.Method.GET, url,
+    Response.Listener { response ->
+        // Handle response
+        TelemetryManager.endSpan(span)
+    },
+    Response.ErrorListener { error ->
+        TelemetryManager.log(
+            TelemetryService.LogLevel.ERROR,
+            "Volley request failed",
+            throwable = error
+        )
+        TelemetryManager.endSpan(span)
+    }
+)
+requestQueue.add(request)
+```
+
+#### Adding Custom Attributes
+
+You can add custom attributes to your spans for more detailed telemetry:
+
+```kotlin
+val attrs = Attributes.builder()
+    .put("http.method", "GET")
+    .put("http.url", url)
+    .build()
+val span = TelemetryManager.startSpan("HTTP GET $url", attrs)
+```
+
+---
+
+For any other HTTP client, follow the manual tracing pattern above. Always end the span in both success and error cases, and optionally record additional attributes (status code, URL, etc.) for richer telemetry.
+
 ### Frame Metrics with Screen Name
 
 Frame time metrics now include a `screen.name` label, so you can identify which Activity, Fragment, or Compose screen is being measured.
