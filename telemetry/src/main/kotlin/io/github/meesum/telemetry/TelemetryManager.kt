@@ -29,7 +29,6 @@ import io.opentelemetry.api.metrics.Meter
 import io.opentelemetry.api.metrics.ObservableLongGauge
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.Tracer
-import io.opentelemetry.context.Scope
 import io.opentelemetry.exporter.otlp.logs.OtlpGrpcLogRecordExporter
 import io.opentelemetry.exporter.otlp.metrics.OtlpGrpcMetricExporter
 import io.opentelemetry.exporter.otlp.trace.OtlpGrpcSpanExporter
@@ -58,6 +57,8 @@ import java.util.concurrent.atomic.AtomicLong
  * - Exposes API to add per-user/session attributes
  * - Supports graceful shutdown/flush
  */
+private class DefaultTelemetrySpan(val delegate: Span) : TelemetrySpan
+
 object TelemetryManager : TelemetryService {
 
     private var initialized = false
@@ -390,26 +391,57 @@ object TelemetryManager : TelemetryService {
 
     }
 
+    override fun startSpan(
+        name: String,
+        attrs: Attributes,
+        parent: TelemetrySpan?
+    ): TelemetrySpan {
+        val mergedAttrs = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
+        val otelAttrs = mergedAttrs.toOtelAttributes()
+        val builder = tracer.spanBuilder(name).setAllAttributes(otelAttrs)
+        if (parent is DefaultTelemetrySpan && parent.delegate != Span.getInvalid()) {
+            builder.setParent(io.opentelemetry.context.Context.current().with(parent.delegate))
+        }
+        return DefaultTelemetrySpan(builder.startSpan())
+    }
+
+    override fun endSpan(span: TelemetrySpan) {
+        if (span is DefaultTelemetrySpan) {
+            span.delegate.end()
+        }
+    }
+
+    override fun <T> withSpan(span: TelemetrySpan, block: () -> T): T {
+        if (span is DefaultTelemetrySpan) {
+            val scope = span.delegate.makeCurrent()
+            try {
+                return block()
+            } finally {
+                scope.close()
+            }
+        } else {
+            return block()
+        }
+    }
+
     override fun <T> span(
         name: String,
         attrs: Attributes,
+        parent: TelemetrySpan?,
         block: () -> T
     ): T {
-        // merge common + call-specific
-        val mergedAttrs = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
-        val otelAttrs = mergedAttrs.toOtelAttributes()
-        val span = tracer.spanBuilder(name)
-            .setAllAttributes(otelAttrs)
-            .startSpan()
-        val scope: Scope = span.makeCurrent()
-        return try {
-            block()
-        } catch (t: Throwable) {
-            span.recordException(t)
-            throw t
-        } finally {
-            scope.close()
-            span.end()
+        val s = startSpan(name, attrs, parent)
+        return withSpan(s) {
+            try {
+                block()
+            } catch (t: Throwable) {
+                if (s is DefaultTelemetrySpan) {
+                    s.delegate.recordException(t)
+                }
+                throw t
+            } finally {
+                endSpan(s)
+            }
         }
     }
 

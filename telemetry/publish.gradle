@@ -1,0 +1,47 @@
+apply plugin: 'maven-publish'
+
+def githubProperties = new Properties()
+def githubPropertiesFile = rootProject.file("github.properties")
+if (githubPropertiesFile.exists()) {
+    githubProperties.load(new FileInputStream(githubPropertiesFile))
+}
+
+def versionProps = new Properties()
+def versionPropsFile = rootProject.file("version.properties")
+if (versionPropsFile.exists()) {
+    versionProps.load(new FileInputStream(versionPropsFile))
+}
+def libraryVersion = versionProps['VERSION_NAME'] ?: '1.0.0'
+
+afterEvaluate {
+    def group = 'io.github.meesum'
+    def artifactId = 'telemetry'
+    def githubUrl = "https://maven.pkg.github.com/meesum-ali/telemetry-android-lib"
+
+    publishing {
+        publications {
+            release(MavenPublication) {
+                from components.release
+                groupId = group
+                artifactId = artifactId + '-release'
+                version = libraryVersion
+            }
+            debug(MavenPublication) {
+                from components.debug
+                groupId = group
+                artifactId = artifactId + '-debug'
+                version = libraryVersion
+            }
+        }
+        repositories {
+            maven {
+                name = "GitHubPackages"
+                url = uri(githubUrl)
+                credentials {
+                    username = githubProperties['gpr.usr'] ?: System.getenv("GPR_USER")
+                    password = githubProperties['gpr.key'] ?: System.getenv("GPR_API_KEY")
+                }
+            }
+        }
+    }
+} 

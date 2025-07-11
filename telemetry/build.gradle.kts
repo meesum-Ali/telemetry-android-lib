@@ -44,6 +44,8 @@ val libraryVersion = versionProps["VERSION_NAME"]?.toString() ?: "1.0.0"
 group = "io.github.meesum"
 version = libraryVersion
 
+apply(from = "publish.gradle")
+
 /* ───────── Android ───────── */
 android {
     namespace  = "io.github.meesum.telemetry" // Renamed namespace
@@ -89,87 +91,6 @@ android { // Add this block to configure Robolectric
     }
 }
 
-publishing {
-    publications {
-        create<MavenPublication>("release") {
-            // Set artifact details
-            groupId = "io.github.meesum"
-            artifactId = "telemetry"
-            version = libraryVersion
-
-            // Publish the AAR
-            afterEvaluate {
-                from(components["release"])
-            }
-
-            // Configure POM for Maven Central requirements
-            pom {
-                name.set("Meesum Telemetry SDK")
-                description.set("""
-                    |# Telemetry Android Library
-                    |
-                    |A lightweight and efficient Android library for collecting, processing, and exporting telemetry data.
-                    |
-                    |## Features
-                    |- Collect various types of telemetry data
-                    |- Process and filter telemetry events
-                    |- Export data to multiple destinations
-                    |- Highly configurable and extensible
-                    |
-                    |## Requirements
-                    |- Android 5.0 (API level 21) and above
-                    |
-                    |## Installation
-                    |```gradle
-                    |implementation 'io.github.meesum:telemetry:1.0.0'
-                    |```
-                    |
-                    |## Documentation
-                    |For more information, please visit the [GitHub repository](https://github.com/meesum-ali/telemetry-android-lib).
-                """.trimMargin())
-                url.set("https://github.com/meesum-ali/telemetry-android-lib")
-
-                // License information
-                licenses {
-                    license {
-                        name.set("The Apache License, Version 2.0")
-                        url.set("http://www.apache.org/licenses/LICENSE-2.0.txt")
-                    }
-                }
-
-                developers {
-                    developer {
-                        id.set("meesum-ali")
-                        name.set("Meesum Ali")
-                        email.set("meesumdex@gmail.com") // Update with your email
-                    }
-                }
-
-                scm {
-                    connection.set("scm:git:git://github.com/meesum-ali/telemetry-android-lib.git")
-                    developerConnection.set("scm:git:ssh://github.com/meesum-ali/telemetry-android-lib.git")
-                    url.set("https://github.com/meesum-ali/telemetry-android-lib")
-                }
-            }
-        }
-    }
-
-    repositories {
-        // Local Maven repository is configured by default
-        mavenLocal()
-
-        // GitHub Packages repository
-        maven {
-            name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/meesum-ali/telemetry-android-lib")
-            credentials {
-                username = getGithubProperty("gpr.user") ?: getGithubProperty("github.actor")
-                password = getGithubProperty("gpr.key") ?: getGithubProperty("github.token")
-            }
-        }
-    }
-}
-
 // Task to publish to local Maven repository (~/.m2/repository)
 tasks.register("publishLocal") {
     group = "publishing"
@@ -180,25 +101,19 @@ tasks.register("publishLocal") {
 // Task to publish to GitHub Packages
 tasks.register("publishGitHub") {
     group = "publishing"
-    description = "Publishes the release build to GitHub Packages"
+    description = "Publishes the release and debug builds to GitHub Packages (via publish.gradle)"
 
-    val githubUser = getGithubProperty("gpr.user") ?: getGithubProperty("github.actor")
-    val githubToken = getGithubProperty("gpr.key") ?: getGithubProperty("github.token")
+    // These tasks are created by publish.gradle (Groovy)
+    val releaseTask = tasks.findByName("publishReleasePublicationToGitHubPackagesRepository")
+    val debugTask = tasks.findByName("publishDebugPublicationToGitHubPackagesRepository")
 
-    if (githubUser != null && githubToken != null) {
-        dependsOn("publishReleasePublicationToGitHubPackagesRepository")
-    } else {
-        doFirst {
-            throw GradleException("""
-                GitHub Packages publishing failed: Missing GitHub credentials.
-                Please ensure you have a github.properties file with:
-                - gpr.user or github.actor
-                - gpr.key or github.token
-                
-                Or set the corresponding environment variables.
-            """.trimIndent())
+    doFirst {
+        if (releaseTask == null && debugTask == null) {
+            throw GradleException("No publish tasks found. Ensure publish.gradle is applied and publication tasks are available.")
         }
     }
+    if (releaseTask != null) dependsOn(releaseTask)
+    if (debugTask != null) dependsOn(debugTask)
 }
 
 // Task to publish to both local Maven and GitHub Packages

@@ -18,9 +18,44 @@ A lightweight Android library that provides a simple wrapper around OpenTelemetr
 - 🎯 **Custom Event Tracking**: Track business events and user interactions with structured attributes
 - 🎨 **UI Performance Monitoring**: Frame time metrics and jank detection with screen-level granularity
 
+## Tracing Usage Examples
+
+### Block-based Span (Simple)
+```kotlin
+TelemetryManager.span("user_login") {
+    // Your login logic here
+    TelemetryManager.log(TelemetryManager.LogLevel.DEBUG, "User logged in")
+}
+```
+
+### Manual Parent/Child Spans
+```kotlin
+val parent = TelemetryManager.startSpan("parentOp")
+TelemetryManager.withSpan(parent) {
+    val child = TelemetryManager.startSpan("childOp", parent = parent)
+    // ... do work ...
+    TelemetryManager.endSpan(child)
+}
+TelemetryManager.endSpan(parent)
+```
+
+### Block-based Span with Parent
+```kotlin
+val parent = TelemetryManager.startSpan("parentOp")
+TelemetryManager.span("childOp", parent = parent) {
+    // ... do work ...
+}
+TelemetryManager.endSpan(parent)
+```
+
+---
+
 ## Installation
 
 The library will be available via GitHub Packages.
+
+> **⚠️ GitHub Packages always requires credentials to consume packages, even if the repository and package are public.**
+> You must provide a GitHub username and a Personal Access Token (PAT) with at least `read:packages` scope.
 
 **1. Configure GitHub Packages repository in your `settings.gradle(.kts)` or root `build.gradle(.kts)`:**
 
@@ -33,12 +68,11 @@ dependencyResolutionManagement {
         mavenCentral()
         maven {
             name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/YOUR_GITHUB_USERNAME_OR_ORG/YOUR_REPOSITORY_NAME") // TODO: Replace with the correct OWNER/REPO
-            // You might need credentials if the package is private or your organization requires it
-            // credentials {
-            //     username = System.getenv("GITHUB_ACTOR")
-            //     password = System.getenv("GITHUB_TOKEN")
-            // }
+            url = uri("https://maven.pkg.github.com/meesum-ali/telemetry-android-lib")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR") ?: "YOUR_GITHUB_USERNAME"
+                password = System.getenv("GITHUB_TOKEN") ?: "YOUR_PERSONAL_ACCESS_TOKEN"
+            }
         }
     }
 }
@@ -48,10 +82,11 @@ dependencyResolutionManagement {
 
 ```kotlin
 dependencies {
-    // TODO: Replace with the correct groupId, artifactId and version after publishing
-    implementation("io.github.meesum.telemetry:telemetry:1.1.2")
+    implementation("io.github.meesum.telemetry:telemetry-release:1.0.0") // or telemetry-debug
 }
 ```
+
+> **Note:** If you do not provide credentials, dependency resolution from GitHub Packages will fail, even for public packages. See [GitHub Docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-maven-registry#authenticating-to-github-packages) for more details.
 
 Alternatively, you can build from source or use a local build.
 

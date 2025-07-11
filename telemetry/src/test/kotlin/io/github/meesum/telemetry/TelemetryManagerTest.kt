@@ -153,6 +153,36 @@ class TelemetryManagerTest {
         assertTrue(initializedField.getBoolean(TelemetryManager))
     }
 
+    @Test
+    fun `manual parent-child span creation and ending should not throw`() {
+        val parent = TelemetryManager.startSpan("parent")
+        val child = TelemetryManager.startSpan("child", parent = parent)
+        TelemetryManager.endSpan(child)
+        TelemetryManager.endSpan(parent)
+    }
+
+    @Test
+    fun `withSpan should execute block with span as current`() {
+        val span = TelemetryManager.startSpan("withSpan")
+        var executed = false
+        TelemetryManager.withSpan(span) {
+            executed = true
+        }
+        TelemetryManager.endSpan(span)
+        assertTrue(executed)
+    }
+
+    @Test
+    fun `block-based span with parent should execute and end spans`() {
+        val parent = TelemetryManager.startSpan("parent")
+        var executed = false
+        TelemetryManager.span("child", parent = parent) {
+            executed = true
+        }
+        TelemetryManager.endSpan(parent)
+        assertTrue(executed)
+    }
+
     private fun resetTelemetryManager() {
         val field = TelemetryManager::class.java.getDeclaredField("initialized")
         field.isAccessible = true
