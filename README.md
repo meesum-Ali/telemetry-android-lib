@@ -7,16 +7,86 @@ A lightweight Android library that provides a simple wrapper around OpenTelemetr
 - 📊 **Tracing**: Distributed tracing with OpenTelemetry
 - 📈 **Metrics**: Built-in metrics collection
 - 📝 **Structured Logging**: Log collection with different severity levels
-- 📊 **App Vitals**: Memory, CPU, battery, thread count and uptime exported automatically
+- 📊 **App Vitals**: Enhanced memory metrics (usage, heap, pressure), CPU usage percentage, battery, thread count and uptime exported automatically with screen context
 - 🛑 **Crash Reporting**: Uncaught exceptions are logged
 - 🚀 **Easy Integration**: Simple setup and initialization
 - 🔌 **Grafana LGTM Ready**: Pre-configured for Grafana's observability stack
 - 🛡️ **Production Ready**: Built with performance and reliability in mind
 - 🧩 **Custom Exporters**: Plug in your own OpenTelemetry exporters
 - ⚡ **Automatic Activity Instrumentation**: Optionally trace Activity lifecycle automatically
+- 🧩 **Fragment Lifecycle Tracing**: Full Fragment lifecycle instrumentation
 - 🌐 **Network Request Monitoring**: OkHttp interceptor for automatic HTTP tracing/metrics
 - 🎯 **Custom Event Tracking**: Track business events and user interactions with structured attributes
 - 🎨 **UI Performance Monitoring**: Frame time metrics and jank detection with screen-level granularity
+- 🚨 **ANR Detection**: Automatic detection of Application Not Responding events
+- 🐢 **Slow Operation Detection**: Identify operations blocking the main thread
+- ⏱️ **Startup Time Tracking**: Monitor app cold and warm start times
+- 🗑️ **GC Monitoring**: Track garbage collection patterns
+- 🔄 **Coroutine Tracing**: Context propagation for Kotlin coroutines
+
+## Architecture
+
+The library follows a **modular collector architecture** for clean separation of concerns, maintainability, and scalability.
+
+### Modular Design
+
+```
+telemetry/
+├── collectors/                    # Metrics Collectors
+│   ├── MetricsCollector.kt       # Base interface
+│   ├── BatteryMetricsCollector.kt
+│   ├── MemoryMetricsCollector.kt
+│   ├── CpuMetricsCollector.kt
+│   ├── StorageMetricsCollector.kt
+│   ├── DisplayMetricsCollector.kt
+│   ├── SystemResourceMetricsCollector.kt
+│   ├── NetworkMetricsCollector.kt
+│   ├── PerformanceMetricsCollector.kt
+│   ├── AppStateMetricsCollector.kt
+│   └── GcMetricsCollector.kt
+│
+├── monitors/                      # Active Monitoring
+│   ├── JankMonitor.kt            # Frame & jank detection
+│   ├── AnrMonitor.kt             # ANR detection
+│   └── SlowOperationMonitor.kt   # Slow operation detection
+│
+├── TelemetryManager.kt           # Core orchestrator (~680 lines)
+├── TelemetryService.kt           # Public API interface
+├── TelemetryConfig.kt            # Configuration data class
+├── Attributes.kt                 # Type-safe attributes
+└── FlowTracingExtensions.kt      # Coroutine Flow tracing
+```
+
+### Benefits
+
+- **✅ Separation of Concerns**: Each collector handles one metric category
+- **✅ Testability**: Test collectors independently
+- **✅ Scalability**: Add new metrics by creating new collectors
+- **✅ Maintainability**: Small, focused files (50-150 lines each)
+- **✅ Configurability**: Easy to enable/disable collectors
+
+### Collectors Overview
+
+| Collector | Metrics | Description |
+|-----------|---------|-------------|
+| **BatteryMetricsCollector** | Battery level, temperature, voltage, health, charging status | Complete battery health monitoring |
+| **MemoryMetricsCollector** | Usage, max, heap size, pressure % | Memory metrics with screen context |
+| **CpuMetricsCollector** | CPU time, usage % | CPU monitoring with screen context |
+| **StorageMetricsCollector** | Used/available storage, cache/data size | Storage utilization tracking |
+| **DisplayMetricsCollector** | Screen width/height, refresh rate, orientation, density | Display characteristics |
+| **SystemResourceMetricsCollector** | Total/available RAM, CPU cores, thermal state, thread count | System-wide resources |
+| **NetworkMetricsCollector** | Bytes transferred, active network type | Network usage tracking |
+| **PerformanceMetricsCollector** | Frame time, jank counts by severity | UI performance metrics |
+| **AppStateMetricsCollector** | Uptime, startup time, foreground/background state | App lifecycle metrics |
+| **GcMetricsCollector** | GC invocations | Garbage collection patterns |
+
+### Monitors Overview
+
+| Monitor | Purpose | Configuration |
+|---------|---------|---------------|
+| **JankMonitor** | Detects UI jank (mild, moderate, severe) | Always enabled |
+| **AnrMonitor** | Detects ANR events | `enableAnrDetection`, `anrThresholdMs` |
+| **SlowOperationMonitor** | Detects slow main thread operations | `enableSlowOperationDetection`, `slowOperationThresholdMs` |
 
 ## Tracing Usage Examples
 
@@ -241,6 +311,70 @@ TelemetryManager.init(
 )
 ```
 
+### Advanced Auto-Instrumentation Features
+
+The library now includes several advanced auto-instrumentation capabilities that can be configured during initialization:
+
+```kotlin
+TelemetryManager.init(
+    application = this,
+    serviceName = "MyAndroidApp",
+    serviceVersion = BuildConfig.VERSION_NAME,
+    environment = if (BuildConfig.DEBUG) "debug" else "production",
+    otlpEndpoint = "http://your-otel-collector:4317",
+    autoInstrumentActivities = true,
+    
+    // ANR Detection - detects when main thread is blocked
+    enableAnrDetection = true,
+    anrThresholdMs = 5000, // Report ANR if main thread blocked > 5 seconds
+    
+    // Slow Operation Detection - detects operations blocking the main thread
+    enableSlowOperationDetection = true,
+    slowOperationThresholdMs = 100, // Report if operation takes > 100ms
+    
+    // Fragment Lifecycle Tracing - full fragment lifecycle instrumentation
+    enableFragmentTracing = true,
+    
+    // GC Monitoring - track garbage collection patterns
+    enableGcMonitoring = true
+)
+```
+
+#### ANR (Application Not Responding) Detection
+
+The library automatically monitors the main thread and detects when it becomes unresponsive. When an ANR is detected:
+- A metric (`app.anr.count`) is incremented
+- An error log is created with details about the ANR duration and current screen
+- Attributes include: `anr.duration.ms`, `screen.name`, `thread.main.blocked`
+
+#### Slow Operation Detection
+
+Detects operations that block the main thread beyond a configurable threshold:
+- Metric: `app.slow_operation.count`
+- Attributes: `operation.duration.ms`, `screen.name`, `operation.threshold.ms`
+- Helps identify performance bottlenecks in your app
+
+#### Fragment Lifecycle Tracing
+
+When enabled, the library automatically traces all Fragment lifecycle events:
+- Creates spans for: `created`, `started`, `resumed`, `paused`, `stopped`, `destroyed`
+- Attributes include: `fragment.name`, `lifecycle.event`
+- Screen name is automatically updated when fragments are resumed
+
+#### Startup Time Tracking
+
+The library automatically tracks app startup time:
+- Measures time from application initialization to first activity resume
+- Metric: `app.startup.time` (in milliseconds)
+- Logs startup completion with `startup.time.ms` and `startup.type` attributes
+
+#### GC (Garbage Collection) Monitoring
+
+Tracks garbage collection patterns:
+- Metric: `app.gc.invocations` (heuristic-based count)
+- Counter: `app.gc.count` incremented for each detected GC event
+- Helps identify memory pressure issues
+
 ### Network Request Monitoring (OkHttp)
 
 Add the provided interceptor to your OkHttp client for automatic HTTP tracing and metrics:
@@ -250,6 +384,24 @@ val client = OkHttpClient.Builder()
     .addInterceptor(TelemetryManager.createOkHttpInterceptor())
     .build()
 ```
+
+**The interceptor automatically:**
+- ✅ Creates spans for each HTTP request with method, URL, host, scheme
+- ✅ Records HTTP status codes and response content length
+- ✅ Tracks request metrics with labels (method, status code, host)
+- ✅ Records exceptions for failed requests with error details
+- ✅ Propagates OpenTelemetry context across network boundaries
+- ✅ Increments `http_client_request_count` metric with rich metadata
+
+**Captured Attributes:**
+- `http.method` - Request method (GET, POST, etc.)
+- `http.url` - Full request URL
+- `http.host` - Target host
+- `http.scheme` - URL scheme (http/https)
+- `http.status_code` - Response status code
+- `http.response.content_length` - Response body size
+- `error` - Boolean flag for failed requests
+- `error.type` - Exception type for failures
 
 ---
 
@@ -433,16 +585,135 @@ Custom event attributes are automatically serialized as JSON and included in the
 
 This makes it easy to track and analyze user behavior, business metrics, and custom application events in your observability backend.
 
-### Jank Metrics
+### Enhanced Jank Metrics
 
-Jank events (frames taking longer than 16.67ms) are now recorded as a metric (`ui.jank.count`) instead of logs, reducing log clutter and making analysis easier.
+Jank events are now intelligently categorized by severity and recorded with comprehensive metrics:
 
-- The metric includes:
-  - `screen.name`: The current Activity, Fragment, or Compose screen
-  - All common attributes (e.g., user/session/app info)
-  - `frame.time.ns` and `frame.time.ms`: The duration of the jank frame
+**Jank Severity Levels:**
+- **Mild** (16-33ms): 1 dropped frame, still acceptable for most apps
+- **Moderate** (33-50ms): 2-3 dropped frames, noticeable lag
+- **Severe** (>50ms): 3+ dropped frames, significant jank (logged as warning)
 
-You can now easily chart and alert on jank rates by screen and any attribute in your observability backend (e.g., Grafana, Prometheus).
+**Metrics:**
+- `ui.jank.count` - Counter incremented on each jank event
+- `ui.jank.count.mild` - Total mild jank events
+- `ui.jank.count.moderate` - Total moderate jank events
+- `ui.jank.count.severe` - Total severe jank events
+
+**Attributes included:**
+- `screen.name`: Current Activity, Fragment, or Compose screen
+- `jank.severity`: mild, moderate, or severe
+- `frame.time.ms`: Frame render time in milliseconds
+- `frames.dropped`: Number of frames dropped
+- `fps`: Calculated frames per second during jank
+- All common attributes (user/session/app info)
+
+**Example Queries:**
+```promql
+# Severe jank rate by screen
+rate(ui_jank_count_total{jank_severity="severe"}[5m]) by (screen_name)
+
+# Total jank count by severity
+sum(ui_jank_count_total) by (jank_severity)
+
+# Screens with most jank
+topk(5, sum(rate(ui_jank_count_total[5m])) by (screen_name))
+```
+
+### Enhanced Memory Metrics
+
+Memory monitoring now includes comprehensive metrics with screen context:
+
+**Metrics:**
+- `app_memory_usage_bytes` - Current memory usage
+- `app_memory_max_bytes` - Maximum memory available to app
+- `app_memory_heap_size_bytes` - Current heap size allocated
+- `app_memory_pressure_percent` - Memory pressure (0-100%)
+
+**All metrics include:**
+- `screen.name`: Current screen for context
+- Additional attributes: `memory.used.bytes`, `memory.max.bytes`
+
+**Example Queries:**
+```promql
+# Memory pressure by screen
+app_memory_pressure_percent by (screen_name)
+
+# Memory usage trend
+rate(app_memory_usage_bytes[5m])
+
+# Screens with highest memory pressure
+topk(5, avg(app_memory_pressure_percent) by (screen_name))
+```
+
+### Enhanced CPU Metrics
+
+CPU monitoring now includes both absolute time and usage percentage:
+
+**Metrics:**
+- `app_cpu_time_ms` - Total CPU time consumed (milliseconds)
+- `app_cpu_usage_percent` - CPU usage percentage (0-100%)
+
+**Attributes included:**
+- `screen.name`: Current screen
+- `cpu.time.delta.ms`: CPU time delta since last measurement
+- `time.delta.ms`: Wall clock time delta
+
+**Example Queries:**
+```promql
+# CPU usage by screen
+avg(app_cpu_usage_percent) by (screen_name)
+
+# CPU spikes detection
+delta(app_cpu_time_ms[1m]) > 1000
+
+# Top CPU consuming screens
+topk(5, rate(app_cpu_time_ms[5m]) by (screen_name))
+```
+
+### Coroutine Tracing
+
+The library provides seamless tracing support for Kotlin coroutines with automatic context propagation:
+
+```kotlin
+import io.github.meesum.telemetry.traceCoroutine
+import io.github.meesum.telemetry.traced
+
+// Trace a suspending function
+suspend fun fetchUserData(userId: String): User = traceCoroutine(
+    name = "fetchUserData",
+    attrs = Attributes.builder()
+        .put("user.id", userId)
+        .build()
+) {
+    // Your async operation here
+    apiClient.getUser(userId)
+}
+
+// Use within a CoroutineScope with automatic parent span detection
+suspend fun loadProfile() = coroutineScope {
+    traced("loadProfile") {
+        val user = traced("fetchUser") {
+            // Child span automatically linked to parent
+            fetchUserData("123")
+        }
+        
+        val posts = traced("fetchPosts") {
+            // Another child span
+            fetchUserPosts(user.id)
+        }
+        
+        Profile(user, posts)
+    }
+}
+```
+
+Benefits:
+- Automatic span creation for suspending functions
+- Context propagation across coroutine boundaries
+- Parent-child span relationships preserved
+- Exception tracking in coroutines
+- Works with structured concurrency
 
 ## Local Development & Publishing
 
@@ -567,11 +838,19 @@ For support, please open an issue in the GitHub repository.
 
 - [x] Add more built-in metrics
 - [x] Support for custom exporters (minimal config, no OpenTelemetry types in API)
-- [x] Automatic activity/fragment instrumentation (Activity supported)
+- [x] Automatic activity instrumentation
+- [x] Automatic fragment instrumentation with full lifecycle tracing
 - [x] Network request monitoring (OkHttp supported)
 - [x] Custom event tracking with structured attributes
 - [x] UI performance monitoring with screen-level granularity
 - [x] Jank detection and metrics
-- [ ] Automatic fragment instrumentation
+- [x] ANR (Application Not Responding) detection
+- [x] Slow operation detection on main thread
+- [x] App startup time tracking
+- [x] GC (Garbage Collection) monitoring
+- [x] Coroutine tracing with context propagation
 - [ ] User-defined custom metrics API
 - [ ] Performance profiling integration
+- [ ] Database operation instrumentation (Room/SQLite)
+- [ ] Image loading instrumentation (Glide/Coil/Picasso)
+- [ ] WorkManager instrumentation

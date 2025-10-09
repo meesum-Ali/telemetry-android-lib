@@ -3,30 +3,23 @@ package io.github.meesum.telemetry
 import android.Manifest
 import android.app.Activity
 import android.app.Application
-import android.content.Context
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.net.TrafficStats
-import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
-import android.os.Process
-import android.os.StatFs
 import android.util.Log
-import android.view.Choreographer
 import androidx.annotation.RequiresApi
 import androidx.annotation.RequiresPermission
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.FragmentManager
+import io.github.meesum.telemetry.collectors.*
+import io.github.meesum.telemetry.monitors.AnrMonitor
+import io.github.meesum.telemetry.monitors.JankMonitor
+import io.github.meesum.telemetry.monitors.SlowOperationMonitor
 import io.opentelemetry.api.common.AttributeKey
-import io.opentelemetry.api.logs.LogRecordBuilder
 import io.opentelemetry.api.logs.Logger
 import io.opentelemetry.api.logs.Severity
 import io.opentelemetry.api.metrics.LongCounter
 import io.opentelemetry.api.metrics.Meter
-import io.opentelemetry.api.metrics.ObservableLongGauge
 import io.opentelemetry.api.trace.Span
 import io.opentelemetry.api.trace.Tracer
 import io.opentelemetry.exporter.otlp.logs.OtlpGrpcLogRecordExporter
@@ -45,17 +38,15 @@ import io.opentelemetry.sdk.trace.export.BatchSpanProcessor
 import io.opentelemetry.sdk.trace.export.SpanExporter
 import io.opentelemetry.semconv.ServiceAttributes
 import okhttp3.Interceptor
-import okhttp3.Response
 import java.time.Duration
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Enhanced OpenTelemetry wrapper for Android apps.
- * - Guards against double-init
- * - Adds global resource attributes (service.name, service.version, environment)
- * - Exposes API to add per-user/session attributes
- * - Supports graceful shutdown/flush
+ * Refactored OpenTelemetry wrapper for Android apps.
+ * - Modular collector architecture
+ * - Dedicated monitors for performance tracking
+ * - Clean separation of concerns
  */
 private class DefaultTelemetrySpan(val delegate: Span) : TelemetrySpan
 
@@ -69,36 +60,37 @@ object TelemetryManager : TelemetryService {
     private lateinit var tracer: Tracer
     private lateinit var meter: Meter
     private lateinit var logger: Logger
+    
+    // Counters
     private lateinit var requestCounter: LongCounter
     private lateinit var jankCounter: LongCounter
     private lateinit var eventCounter: LongCounter
+    private lateinit var anrCounter: LongCounter
+    private lateinit var slowOperationCounter: LongCounter
+    private lateinit var gcCounter: LongCounter
 
-    // Attributes to apply globally to every span/log/metric
+    // Common attributes applied to all telemetry
     private var commonAttributes: Attributes = Attributes.empty()
-
-    // Gauges for metrics
-    private var memoryUsageGauge: ObservableLongGauge? = null
-    private var cpuTimeGauge: ObservableLongGauge? = null
-    private var uptimeGauge: ObservableLongGauge? = null
-    private var batteryLevelGauge: ObservableLongGauge? = null
-    private var threadCountGauge: ObservableLongGauge? = null
-    private var networkUsageGauge: ObservableLongGauge? = null
-    private var storageUsageGauge: ObservableLongGauge? = null
-    private var frameTimeGauge: ObservableLongGauge? = null
-    private var activeNetworkGauge: ObservableLongGauge? = null
-    private var appStateGauge: ObservableLongGauge? = null
-    private var screenDensityGauge: ObservableLongGauge? = null
 
     // State tracking
     private var appStartTimeMs: Long = 0
+    private var firstActivityResumedTimeMs: Long = 0
     private var defaultExceptionHandler: Thread.UncaughtExceptionHandler? = null
     private var activitiesStarted = 0
-    private var lastFrameTimeNanos = AtomicLong(0)
-    private var frameTimeCallback: Choreographer.FrameCallback? = null
+    private var isAppStartupComplete = AtomicBoolean(false)
+    private var fragmentLifecycleRegistered = AtomicBoolean(false)
 
-    // Track the current screen (Activity/Fragment/Compose)
+    // Current screen tracking
     @Volatile
     private var currentScreenName: String = "unknown"
+
+    // Collectors - modular metrics collection
+    private val collectors = mutableListOf<MetricsCollector>()
+
+    // Monitors - active monitoring
+    private var jankMonitor: JankMonitor? = null
+    private var anrMonitor: AnrMonitor? = null
+    private var slowOperationMonitor: SlowOperationMonitor? = null
 
     /**
      * Public API for Compose or manual screen tracking
@@ -120,12 +112,19 @@ object TelemetryManager : TelemetryService {
         traceExporterConfig: TelemetryExporterConfig?,
         metricExporterConfig: TelemetryExporterConfig?,
         logExporterConfig: TelemetryExporterConfig?,
-        autoInstrumentActivities: Boolean
+        autoInstrumentActivities: Boolean,
+        enableAnrDetection: Boolean,
+        anrThresholdMs: Long,
+        enableSlowOperationDetection: Boolean,
+        slowOperationThresholdMs: Long,
+        enableFragmentTracing: Boolean,
+        enableGcMonitoring: Boolean
     ) {
         if (initialized) return
         initialized = true
         appStartTimeMs = System.currentTimeMillis()
 
+        // Build resource
         val resource = Resource.getDefault().merge(
             Resource.builder()
                 .put(ServiceAttributes.SERVICE_NAME, serviceName)
@@ -134,7 +133,7 @@ object TelemetryManager : TelemetryService {
                 .build()
         )
 
-        // Helper to build exporter from config
+        // Helper functions to build exporters
         fun buildSpanExporter(cfg: TelemetryExporterConfig?): SpanExporter {
             val c = cfg ?: TelemetryExporterConfig(otlpEndpoint, headers)
             return when (c.type) {
@@ -169,6 +168,7 @@ object TelemetryManager : TelemetryService {
         val metricExporterFinal = buildMetricExporter(metricExporterConfig)
         val logExporterFinal = buildLogExporter(logExporterConfig)
 
+        // Setup OpenTelemetry SDK
         tracerProvider = SdkTracerProvider.builder()
             .addSpanProcessor(
                 BatchSpanProcessor.builder(spanExporter)
@@ -206,6 +206,7 @@ object TelemetryManager : TelemetryService {
         meter = sdk.getMeter("telemetry-android")
         logger = sdk.logsBridge.get("telemetry-android")
 
+        // Setup counters
         requestCounter = meter.counterBuilder("http_client_request_count")
             .setDescription("Number of HTTP requests issued by the app")
             .setUnit("1")
@@ -221,76 +222,153 @@ object TelemetryManager : TelemetryService {
             .setUnit("1")
             .build()
 
-        // Setup gauges for app vitals
-        memoryUsageGauge = meter.gaugeBuilder("app_memory_usage_bytes")
-            .ofLongs()
-            .setDescription("Memory used by the app in bytes")
-            .setUnit("By")
-            .buildWithCallback { measurement ->
-                val runtime = Runtime.getRuntime()
-                val used = runtime.totalMemory() - runtime.freeMemory()
-                measurement.record(used, commonAttributes.toOtelAttributes())
-            }
-
-        cpuTimeGauge = meter.gaugeBuilder("app_cpu_time_ms")
-            .ofLongs()
-            .setDescription("CPU time used by the app in ms")
-            .setUnit("ms")
-            .buildWithCallback { measurement ->
-                measurement.record(Process.getElapsedCpuTime(), commonAttributes.toOtelAttributes())
-            }
-
-        uptimeGauge = meter.gaugeBuilder("app_uptime_ms")
-            .ofLongs()
-            .setDescription("App uptime in ms")
-            .setUnit("ms")
-            .buildWithCallback { measurement ->
-                measurement.record(
-                    System.currentTimeMillis() - appStartTimeMs,
-                    commonAttributes.toOtelAttributes()
-                )
-            }
-
-        batteryLevelGauge = meter.gaugeBuilder("device_battery_percent")
-            .ofLongs()
-            .setDescription("Device battery level percentage")
+        anrCounter = meter.counterBuilder("app.anr.count")
+            .setDescription("Number of ANR (Application Not Responding) events detected")
             .setUnit("1")
-            .buildWithCallback { measurement ->
-                val bm = application.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
-                if (bm != null) {
-                    val level = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-                    if (level >= 0) measurement.record(
-                        level.toLong(),
-                        commonAttributes.toOtelAttributes()
-                    )
-                }
-            }
+            .build()
 
-        threadCountGauge = meter.gaugeBuilder("app_thread_count")
-            .ofLongs()
-            .setDescription("Number of active threads in the app")
+        slowOperationCounter = meter.counterBuilder("app.slow_operation.count")
+            .setDescription("Number of slow operations detected on main thread")
             .setUnit("1")
-            .buildWithCallback { measurement ->
-                measurement.record(
-                    Thread.activeCount().toLong(),
-                    commonAttributes.toOtelAttributes()
-                )
+            .build()
+
+        gcCounter = meter.counterBuilder("app.gc.count")
+            .setDescription("Number of garbage collection events")
+            .setUnit("1")
+            .build()
+
+        // Initialize collectors
+        initCollectors(application)
+
+        // Initialize monitors
+        initMonitors(
+            enableAnrDetection,
+            anrThresholdMs,
+            enableSlowOperationDetection,
+            slowOperationThresholdMs,
+            enableGcMonitoring
+        )
+
+        // Setup activity lifecycle tracking
+        setupActivityLifecycleTracking(
+            application,
+            autoInstrumentActivities,
+            enableFragmentTracing
+        )
+
+        // Install crash handler
+        setupCrashHandler()
+
+        // Log app metadata
+        logAppMetadata(application)
+
+        Log.i(
+            "TelemetryManager",
+            "OpenTelemetry initialized. Service: $serviceName, Version: $serviceVersion, Env: $environment"
+        )
+        Log.i("TelemetryManager", "Metrics OTLP endpoint: $otlpEndpoint, Export interval: 30s")
+        Log.i("TelemetryManager", "Collectors: ${collectors.size}, Monitors: ${listOfNotNull(jankMonitor, anrMonitor, slowOperationMonitor).size}")
+    }
+
+    private fun initCollectors(application: Application) {
+        // Add all collectors
+        collectors.add(BatteryMetricsCollector(::getCommonAttributes))
+        collectors.add(MemoryMetricsCollector(::getCommonAttributes, ::getCurrentScreenName))
+        collectors.add(CpuMetricsCollector(::getCommonAttributes, ::getCurrentScreenName))
+        collectors.add(StorageMetricsCollector(::getCommonAttributes))
+        collectors.add(DisplayMetricsCollector(::getCommonAttributes))
+        collectors.add(SystemResourceMetricsCollector(::getCommonAttributes))
+        collectors.add(NetworkMetricsCollector(::getCommonAttributes))
+        collectors.add(AppStateMetricsCollector(
+            ::getCommonAttributes,
+            { appStartTimeMs },
+            { firstActivityResumedTimeMs },
+            { isAppStartupComplete.get() },
+            { activitiesStarted }
+        ))
+        collectors.add(GcMetricsCollector(::getCommonAttributes))
+
+        // Setup all collectors
+        collectors.forEach { it.setup(application, meter) }
+        
+        Log.d("TelemetryManager", "Initialized ${collectors.size} metrics collectors")
+    }
+
+    private fun initMonitors(
+        enableAnrDetection: Boolean,
+        anrThresholdMs: Long,
+        enableSlowOperationDetection: Boolean,
+        slowOperationThresholdMs: Long,
+        enableGcMonitoring: Boolean
+    ) {
+        // Initialize JankMonitor
+        jankMonitor = JankMonitor(
+            jankCounter,
+            ::getCommonAttributes,
+            ::getCurrentScreenName
+        ).also { 
+            it.start()
+            Log.d("TelemetryManager", "JankMonitor started")
+        }
+
+        // Add PerformanceMetricsCollector (depends on JankMonitor)
+        jankMonitor?.let { jMonitor ->
+            collectors.add(PerformanceMetricsCollector(
+                ::getCommonAttributes,
+                ::getCurrentScreenName,
+                jMonitor::getLastFrameTimeNanos,
+                jMonitor::getJankCountMild,
+                jMonitor::getJankCountModerate,
+                jMonitor::getJankCountSevere
+            ))
+        }
+
+        // Initialize ANR Monitor
+        if (enableAnrDetection) {
+            anrMonitor = AnrMonitor(
+                anrCounter,
+                anrThresholdMs,
+                ::getCommonAttributes,
+                ::getCurrentScreenName,
+                ::log
+            ).also { 
+                it.start()
+                Log.d("TelemetryManager", "ANR Monitor started (threshold: ${anrThresholdMs}ms)")
             }
+        }
 
-        // Setup additional metrics
-        setupNetworkMonitoring(context = application)
-        setupStorageMonitoring(application)
-        setupFrameMonitoring(application)
-        setupAppLifecycleMonitoring(application)
+        // Initialize Slow Operation Monitor
+        if (enableSlowOperationDetection) {
+            slowOperationMonitor = SlowOperationMonitor(
+                slowOperationCounter,
+                slowOperationThresholdMs,
+                ::getCommonAttributes,
+                ::getCurrentScreenName,
+                ::log
+            ).also { 
+                it.start()
+                Log.d("TelemetryManager", "Slow Operation Monitor started (threshold: ${slowOperationThresholdMs}ms)")
+            }
+        }
+    }
 
-        // Auto-instrument activities if requested
-        if (autoInstrumentActivities) {
-            application.registerActivityLifecycleCallbacks(object :
-                Application.ActivityLifecycleCallbacks {
-                private var currentSpan: Span? = null
-                override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
-                    // Register fragment lifecycle for screen tracking if possible
-                    if (activity is FragmentActivity) {
+    private fun setupActivityLifecycleTracking(
+        application: Application,
+        autoInstrumentActivities: Boolean,
+        enableFragmentTracing: Boolean
+    ) {
+        application.registerActivityLifecycleCallbacks(object :
+            Application.ActivityLifecycleCallbacks {
+            private var currentSpan: Span? = null
+
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {
+                // Register fragment lifecycle for screen tracking and tracing if possible
+                if (activity is FragmentActivity && !fragmentLifecycleRegistered.get()) {
+                    fragmentLifecycleRegistered.set(true)
+                    if (enableFragmentTracing) {
+                        setupFragmentTracing(activity)
+                    } else {
+                        // Just track screen names without full tracing
                         activity.supportFragmentManager.registerFragmentLifecycleCallbacks(
                             object : FragmentManager.FragmentLifecycleCallbacks() {
                                 override fun onFragmentResumed(
@@ -303,30 +381,71 @@ object TelemetryManager : TelemetryService {
                         )
                     }
                 }
+            }
 
-                override fun onActivityStarted(activity: Activity) {
+            override fun onActivityStarted(activity: Activity) {
+                activitiesStarted++
+                if (autoInstrumentActivities) {
                     currentSpan =
                         tracer.spanBuilder("ActivityStarted:${activity.javaClass.simpleName}")
                             .startSpan()
                     currentSpan?.makeCurrent()
                 }
+            }
 
-                override fun onActivityResumed(activity: Activity) {
-                    currentScreenName = activity.javaClass.simpleName
+            override fun onActivityResumed(activity: Activity) {
+                currentScreenName = activity.javaClass.simpleName
+                // Mark app startup as complete on first activity resume
+                if (!isAppStartupComplete.getAndSet(true)) {
+                    firstActivityResumedTimeMs = System.currentTimeMillis()
+                    val startupTime = firstActivityResumedTimeMs - appStartTimeMs
+                    log(
+                        TelemetryService.LogLevel.INFO,
+                        "App startup completed",
+                        Attributes.builder()
+                            .put("startup.time.ms", startupTime)
+                            .put("startup.type", "cold")
+                            .build()
+                    )
                 }
+            }
 
-                override fun onActivityPaused(activity: Activity) {}
-                override fun onActivityStopped(activity: Activity) {
+            override fun onActivityPaused(activity: Activity) {}
+            
+            override fun onActivityStopped(activity: Activity) {
+                activitiesStarted--
+                if (autoInstrumentActivities) {
                     currentSpan?.end()
                     currentSpan = null
                 }
+            }
 
-                override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
-                override fun onActivityDestroyed(activity: Activity) {}
-            })
-        }
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        })
+    }
 
-        // Install crash handler
+    private fun setupFragmentTracing(activity: FragmentActivity) {
+        val fragmentSpans = mutableMapOf<Fragment, Span>()
+        activity.supportFragmentManager.registerFragmentLifecycleCallbacks(
+            object : FragmentManager.FragmentLifecycleCallbacks() {
+                override fun onFragmentResumed(fm: FragmentManager, fragment: Fragment) {
+                    currentScreenName = fragment.javaClass.simpleName
+                    val span = tracer.spanBuilder("Fragment:${fragment.javaClass.simpleName}")
+                        .setAllAttributes(commonAttributes.toOtelAttributes())
+                        .startSpan()
+                    fragmentSpans[fragment] = span
+                    span.makeCurrent()
+                }
+
+                override fun onFragmentPaused(fm: FragmentManager, fragment: Fragment) {
+                    fragmentSpans.remove(fragment)?.end()
+                }
+            }, true
+        )
+    }
+
+    private fun setupCrashHandler() {
         defaultExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             log(
@@ -341,14 +460,45 @@ object TelemetryManager : TelemetryService {
             )
             defaultExceptionHandler?.uncaughtException(t, e)
         }
-
-        Log.i(
-            "TelemetryManager",
-            "OpenTelemetry initialized. Service: $serviceName, Version: $serviceVersion, Env: $environment"
-        )
-        Log.i("TelemetryManager", "Metrics OTLP endpoint: $otlpEndpoint, Export interval: 30s")
-        Log.i("TelemetryManager", "Traces/Logs OTLP endpoint: $otlpEndpoint")
     }
+
+    private fun logAppMetadata(application: Application) {
+        try {
+            val packageInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                application.packageManager.getPackageInfo(
+                    application.packageName,
+                    android.content.pm.PackageManager.PackageInfoFlags.of(0)
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                application.packageManager.getPackageInfo(application.packageName, 0)
+            }
+
+            log(
+                TelemetryService.LogLevel.INFO,
+                "App metadata collected",
+                Attributes.builder()
+                    .put("app.install.time", packageInfo.firstInstallTime)
+                    .put("app.update.time", packageInfo.lastUpdateTime)
+                    .put("app.version.code",
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                            packageInfo.longVersionCode
+                        } else {
+                            @Suppress("DEPRECATION")
+                            packageInfo.versionCode.toLong()
+                        }
+                    )
+                    .put("app.version.name", packageInfo.versionName ?: "unknown")
+                    .put("app.package.name", application.packageName)
+                    .build()
+            )
+        } catch (e: Exception) {
+            Log.e("TelemetryManager", "Failed to get app metadata", e)
+        }
+    }
+
+    private fun getCommonAttributes(): Attributes = commonAttributes
+    private fun getCurrentScreenName(): String = currentScreenName
 
     /**
      * Set additional common attributes (e.g. user.id, session.id)
@@ -365,22 +515,18 @@ object TelemetryManager : TelemetryService {
         Log.i("TelemetryManager", "Shutting down TelemetryManager...")
         Thread.setDefaultUncaughtExceptionHandler(defaultExceptionHandler)
 
-        // Close all gauges
-        memoryUsageGauge?.close()
-        cpuTimeGauge?.close()
-        uptimeGauge?.close()
-        batteryLevelGauge?.close()
-        threadCountGauge?.close()
-        networkUsageGauge?.close()
-        storageUsageGauge?.close()
-        frameTimeGauge?.close()
-        activeNetworkGauge?.close()
-        appStateGauge?.close()
-        screenDensityGauge?.close()
+        // Shutdown all collectors
+        collectors.forEach { it.shutdown() }
+        collectors.clear()
+        Log.d("TelemetryManager", "All collectors shut down")
 
-        // Remove frame callback
-        frameTimeCallback?.let { Choreographer.getInstance().removeFrameCallback(it) }
+        // Shutdown all monitors
+        jankMonitor?.stop()
+        anrMonitor?.stop()
+        slowOperationMonitor?.stop()
+        Log.d("TelemetryManager", "All monitors stopped")
 
+        // Shutdown OpenTelemetry providers
         Log.d("TelemetryManager", "Shutting down TracerProvider.")
         tracerProvider.shutdown()
         Log.d("TelemetryManager", "Shutting down MeterProvider.")
@@ -388,8 +534,9 @@ object TelemetryManager : TelemetryService {
         Log.d("TelemetryManager", "Shutting down LoggerProvider.")
         loggerProvider.shutdown()
         Log.i("TelemetryManager", "TelemetryManager shutdown complete.")
-
     }
+
+    // ==================== Span API ====================
 
     override fun startSpan(
         name: String,
@@ -430,20 +577,15 @@ object TelemetryManager : TelemetryService {
         parent: TelemetrySpan?,
         block: () -> T
     ): T {
-        val s = startSpan(name, attrs, parent)
-        return withSpan(s) {
-            try {
-                block()
-            } catch (t: Throwable) {
-                if (s is DefaultTelemetrySpan) {
-                    s.delegate.recordException(t)
-                }
-                throw t
-            } finally {
-                endSpan(s)
-            }
+        val sp = startSpan(name, attrs, parent)
+        return try {
+            withSpan(sp) { block() }
+        } finally {
+            endSpan(sp)
         }
     }
+
+    // ==================== Logging API ====================
 
     override fun log(
         level: TelemetryService.LogLevel,
@@ -452,287 +594,75 @@ object TelemetryManager : TelemetryService {
         throwable: Throwable?
     ) {
         val mergedAttrs = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
-        val otelAttrs = mergedAttrs.toOtelAttributes()
-        val record: LogRecordBuilder = logger.logRecordBuilder()
+        val builder = logger.logRecordBuilder()
+            .setTimestamp(System.currentTimeMillis(), TimeUnit.MILLISECONDS)
+            .setSeverity(
+                when (level) {
+                    TelemetryService.LogLevel.DEBUG -> Severity.DEBUG
+                    TelemetryService.LogLevel.INFO -> Severity.INFO
+                    TelemetryService.LogLevel.WARN -> Severity.WARN
+                    TelemetryService.LogLevel.ERROR -> Severity.ERROR
+                }
+            )
             .setBody(message)
-            .setAllAttributes(otelAttrs)
-        if (throwable != null) {
-            record.setAttribute(AttributeKey.stringKey("exception.type"), throwable.javaClass.name)
-            record.setAttribute(
-                AttributeKey.stringKey("exception.message"),
-                throwable.message ?: ""
-            )
-            record.setAttribute(
-                AttributeKey.stringKey("exception.stacktrace"),
-                Log.getStackTraceString(throwable)
+            .setAllAttributes(mergedAttrs.toOtelAttributes())
+
+        throwable?.let {
+            builder.setAllAttributes(
+                io.opentelemetry.api.common.Attributes.builder()
+                    .putAll(mergedAttrs.toOtelAttributes())
+                    .put("exception.type", it.javaClass.name)
+                    .put("exception.message", it.message ?: "")
+                    .put("exception.stacktrace", it.stackTraceToString())
+                    .build()
             )
         }
-        when (level) {
-            TelemetryService.LogLevel.DEBUG -> record.setSeverity(Severity.DEBUG)
-            TelemetryService.LogLevel.INFO -> record.setSeverity(Severity.INFO)
-            TelemetryService.LogLevel.WARN -> record.setSeverity(Severity.WARN)
-            TelemetryService.LogLevel.ERROR -> record.setSeverity(Severity.ERROR)
-        }
-        record.emit()
+        builder.emit()
     }
 
-    override fun incRequestCount(
-        amount: Long,
-        attrs: Attributes
-    ) {
+    // ==================== Metrics API ====================
+
+    override fun incRequestCount(amount: Long, attrs: Attributes) {
         val mergedAttrs = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
-        val otelAttrs = mergedAttrs.toOtelAttributes()
-        Log.d(
-            "TelemetryManager",
-            "incRequestCount called. Amount: $amount, Attributes: $otelAttrs, Common Attributes: ${commonAttributes.toOtelAttributes()}"
-        )
-        requestCounter.add(amount, otelAttrs)
+        requestCounter.add(amount, mergedAttrs.toOtelAttributes())
     }
 
-    override fun incEventCount(
-        name: String,
-        amount: Long,
-        attrs: Attributes
-    ) {
-
-        val extraAttributesJson = attrs.toJsonString()
+    override fun incEventCount(name: String, amount: Long, attrs: Attributes) {
         val mergedAttrs = Attributes.builder()
             .putAll(commonAttributes)
-            .put("event.attrs", extraAttributesJson)
+            .putAll(attrs)
             .put("event.name", name)
             .build()
-
-        val otelAttrs = mergedAttrs.toOtelAttributes()
-
-        Log.d(
-            "TelemetryManager",
-            "incEventCount called. Name: $name, Amount: $amount, Attributes: $otelAttrs, Common Attributes: ${commonAttributes.toOtelAttributes()}"
-        )
-
-        eventCounter.add(amount, otelAttrs)
-
+        eventCounter.add(amount, mergedAttrs.toOtelAttributes())
     }
 
-    // Region: Private helper methods for metrics collection
-
-    @RequiresApi(Build.VERSION_CODES.M)
-    @RequiresPermission(Manifest.permission.ACCESS_NETWORK_STATE)
-    private fun setupNetworkMonitoring(context: Context) {
-        // Network usage (bytes transferred)
-        networkUsageGauge = meter.gaugeBuilder("network.bytes.transferred")
-            .setDescription("Network bytes transferred (sent + received)")
-            .setUnit("bytes")
-            .ofLongs()
-            .buildWithCallback { measurement ->
-                val bytes = getNetworkBytesTransferred()
-                if (bytes >= 0) {
-                    measurement.record(bytes, commonAttributes.toOtelAttributes())
-                }
-            }
-
-        // Active network type
-        activeNetworkGauge = meter.gaugeBuilder("network.active")
-            .setDescription("Active network type (0=none, 1=mobile, 2=wifi, 3=ethernet, 4=other)")
-            .ofLongs()
-            .buildWithCallback { measurement ->
-                val networkType = getActiveNetworkType(context)
-                measurement.record(networkType.toLong(), commonAttributes.toOtelAttributes())
-            }
-    }
-
-    private fun setupStorageMonitoring(context: Context) {
-        storageUsageGauge = meter.gaugeBuilder("storage.used.bytes")
-            .setDescription("Used storage space in bytes")
-            .setUnit("bytes")
-            .ofLongs()
-            .buildWithCallback { measurement ->
-                val usedSpace = getUsedStorageSpace(context)
-                if (usedSpace >= 0) {
-                    measurement.record(usedSpace, commonAttributes.toOtelAttributes())
-                }
-            }
-    }
-
-    private fun setupFrameMonitoring(context: Context) {
-        // Frame time monitoring using Choreographer
-        frameTimeGauge = meter.gaugeBuilder("ui.frame.time")
-            .setDescription("Frame render time in nanoseconds")
-            .setUnit("ns")
-            .ofLongs()
-            .buildWithCallback { measurement ->
-                val frameTime = lastFrameTimeNanos.get()
-                if (frameTime > 0) {
-                    val attrs = Attributes.builder()
-                        .putAll(commonAttributes)
-                        .put("screen.name", currentScreenName)
-                        .build()
-                    measurement.record(frameTime, attrs.toOtelAttributes())
-                }
-            }
-        // Set up frame callback to measure frame times
-        frameTimeCallback = object : Choreographer.FrameCallback {
-            private var lastFrameTimeNanos: Long = 0
-
-            override fun doFrame(frameTimeNanos: Long) {
-                if (lastFrameTimeNanos > 0) {
-                    val frameTime = frameTimeNanos - lastFrameTimeNanos
-                    this@TelemetryManager.lastFrameTimeNanos.set(frameTime)
-
-                    // Detect jank (frames taking longer than 16.67ms for 60fps)
-                    if (frameTime > 16_666_667) {
-                        val attrs = Attributes.builder()
-                            .putAll(commonAttributes)
-                            .put("screen.name", currentScreenName)
-                            .put("frame.time.ns", frameTime)
-                            .put("frame.time.ms", frameTime / 1_000_000)
-                            .build()
-                        jankCounter.add(1, attrs.toOtelAttributes())
-                        // (No log to reduce clutter)
-                    }
-                }
-                lastFrameTimeNanos = frameTimeNanos
-                Choreographer.getInstance().postFrameCallback(this)
-            }
-        }
-
-        // Start frame time monitoring
-        Choreographer.getInstance().postFrameCallback(frameTimeCallback!!)
-    }
-
-    private fun setupAppLifecycleMonitoring(application: Application) {
-        // App state (foreground/background)
-        appStateGauge = meter.gaugeBuilder("app.state")
-            .setDescription("App state (0=background, 1=foreground)")
-            .ofLongs()
-            .buildWithCallback { measurement ->
-                measurement.record(
-                    if (activitiesStarted > 0) 1L else 0L,
-                    commonAttributes.toOtelAttributes()
-                )
-            }
-
-        // Screen density
-        screenDensityGauge = meter.gaugeBuilder("device.screen.density")
-            .setDescription("Screen density in DPI")
-            .ofLongs()
-            .buildWithCallback { measurement ->
-                val metrics = application.resources.displayMetrics
-                measurement.record(metrics.densityDpi.toLong(), commonAttributes.toOtelAttributes())
-            }
-
-        // Register activity lifecycle callbacks
-        application.registerActivityLifecycleCallbacks(object :
-            Application.ActivityLifecycleCallbacks {
-            override fun onActivityCreated(
-                activity: Activity,
-                savedInstanceState: Bundle?
-            ) {
-            }
-
-            override fun onActivityStarted(activity: Activity) {
-                if (activitiesStarted == 0) {
-                    // App came to foreground
-                    log(TelemetryService.LogLevel.INFO, "App came to foreground")
-                }
-                activitiesStarted++
-            }
-
-            override fun onActivityResumed(activity: Activity) {}
-            override fun onActivityPaused(activity: Activity) {}
-
-            override fun onActivityStopped(activity: Activity) {
-                activitiesStarted--
-                if (activitiesStarted == 0) {
-                    // App went to background
-                    log(TelemetryService.LogLevel.INFO, "App went to background")
-                }
-            }
-
-            override fun onActivitySaveInstanceState(
-                activity: Activity,
-                outState: Bundle
-            ) {
-            }
-
-            override fun onActivityDestroyed(activity: Activity) {}
-        })
-    }
-
-    @RequiresApi(Build.VERSION_CODES.M)
-    @RequiresPermission(allOf = [Manifest.permission.ACCESS_NETWORK_STATE])
-    private fun getActiveNetworkType(context: Context): Int {
-        return try {
-            val connectivityManager =
-                context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-            val network = connectivityManager?.activeNetwork ?: return 0
-            val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return 0
-
-            when {
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> 2
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> 1
-                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> 3
-                else -> 4 // Other
-            }
-        } catch (e: Exception) {
-            log(TelemetryService.LogLevel.ERROR, "Failed to get network type", throwable = e)
-            0
-        }
-    }
-
-    private fun getNetworkBytesTransferred(): Long {
-        return try {
-            TrafficStats.getTotalRxBytes() + TrafficStats.getTotalTxBytes()
-        } catch (e: Exception) {
-            log(
-                TelemetryService.LogLevel.ERROR,
-                "Failed to get network bytes transferred",
-                throwable = e
-            )
-            -1
-        }
-    }
-
-    private fun getUsedStorageSpace(context: Context): Long {
-        return try {
-            val stat = StatFs(Environment.getDataDirectory().path)
-            val blockSize = stat.blockSizeLong
-            val totalBlocks = stat.blockCountLong
-            val availableBlocks = stat.availableBlocksLong
-            (totalBlocks - availableBlocks) * blockSize
-        } catch (e: Exception) {
-            log(TelemetryService.LogLevel.ERROR, "Failed to get storage usage", throwable = e)
-            -1
-        }
-    }
+    // ==================== Network Monitoring ====================
 
     /**
-     * OkHttp Interceptor for automatic network request tracing and metrics.
-     */
-    class OkHttpTelemetryInterceptor : Interceptor {
-        override fun intercept(chain: Interceptor.Chain): Response {
-            val request = chain.request()
-            val span = tracer.spanBuilder("HTTP ${request.method} ${request.url.encodedPath}")
-                .setAttribute("http.method", request.method)
-                .setAttribute("http.url", request.url.toString())
-                .startSpan()
-            val scope = span.makeCurrent()
-            try {
-                val response = chain.proceed(request)
-                span.setAttribute("http.status_code", response.code.toLong())
-                return response
-            } catch (e: Exception) {
-                span.recordException(e)
-                throw e
-            } finally {
-                scope.close()
-                span.end()
-            }
-        }
-    }
-
-    /**
-     * Returns an OkHttp Interceptor for automatic network request tracing/metrics.
+     * Returns an OkHttp Interceptor for automatic network request tracing and metrics.
+     * 
+     * Usage:
+     * ```kotlin
+     * val client = OkHttpClient.Builder()
+     *     .addInterceptor(TelemetryManager.createOkHttpInterceptor())
+     *     .build()
+     * ```
+     * 
+     * The interceptor automatically:
+     * - Creates spans for each HTTP request with method, URL, status code
+     * - Records exceptions for failed requests
+     * - Increments the http_client_request_count metric with labels
+     * - Propagates OpenTelemetry context across network boundaries
      */
     @JvmStatic
-    fun createOkHttpInterceptor(): Interceptor = OkHttpTelemetryInterceptor()
+    fun createOkHttpInterceptor(): Interceptor {
+        if (!initialized) {
+            throw IllegalStateException("TelemetryManager must be initialized before creating interceptor")
+        }
+        return OkHttpTelemetryInterceptor(
+            tracer = tracer,
+            requestCounter = requestCounter,
+            getCommonAttributes = ::getCommonAttributes
+        )
+    }
 }

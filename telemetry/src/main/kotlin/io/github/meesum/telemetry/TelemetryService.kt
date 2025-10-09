@@ -21,7 +21,13 @@ interface TelemetryService {
         traceExporterConfig: TelemetryExporterConfig? = null,
         metricExporterConfig: TelemetryExporterConfig? = null,
         logExporterConfig: TelemetryExporterConfig? = null,
-        autoInstrumentActivities: Boolean = false
+        autoInstrumentActivities: Boolean = false,
+        enableAnrDetection: Boolean = true,
+        anrThresholdMs: Long = 5000,
+        enableSlowOperationDetection: Boolean = true,
+        slowOperationThresholdMs: Long = 100,
+        enableFragmentTracing: Boolean = true,
+        enableGcMonitoring: Boolean = true
     )
 
     fun setCommonAttributes(attrs: Attributes)
