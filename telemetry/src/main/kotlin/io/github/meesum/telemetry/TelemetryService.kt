@@ -81,6 +81,20 @@ interface TelemetryService {
         amount: Long = 1,
         attrs: Attributes = Attributes.empty()
     )
+
+    /**
+     * Record a latency/duration measurement as a histogram.
+     * This is ideal for tracking percentiles (p50, p90, p99).
+     *
+     * @param name The name of the latency metric (e.g., "app.startup", "screen.load", "db.query")
+     * @param durationMs The duration in milliseconds
+     * @param attrs Additional attributes to attach to the measurement
+     */
+    fun recordLatency(
+        name: String,
+        durationMs: Long,
+        attrs: Attributes = Attributes.empty()
+    )
 }
 
 // Exporter config abstractions for minimal user input

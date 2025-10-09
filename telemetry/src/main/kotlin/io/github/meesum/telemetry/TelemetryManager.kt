@@ -69,6 +69,10 @@ object TelemetryManager : TelemetryService {
     private lateinit var slowOperationCounter: LongCounter
     private lateinit var gcCounter: LongCounter
 
+    // Histograms for latency tracking
+    private lateinit var screenLoadHistogram: io.opentelemetry.api.metrics.LongHistogram
+    private lateinit var httpLatencyHistogram: io.opentelemetry.api.metrics.LongHistogram
+
     // Common attributes applied to all telemetry
     private var commonAttributes: Attributes = Attributes.empty()
 
@@ -79,6 +83,9 @@ object TelemetryManager : TelemetryService {
     private var activitiesStarted = 0
     private var isAppStartupComplete = AtomicBoolean(false)
     private var fragmentLifecycleRegistered = AtomicBoolean(false)
+
+    // Screen load time tracking
+    private val screenStartTimes = mutableMapOf<String, Long>()
 
     // Current screen tracking
     @Volatile
@@ -237,6 +244,19 @@ object TelemetryManager : TelemetryService {
             .setUnit("1")
             .build()
 
+        // Setup histograms for latency tracking
+        screenLoadHistogram = meter.histogramBuilder("screen_load_duration_ms")
+            .setDescription("Screen load time in milliseconds")
+            .setUnit("ms")
+            .ofLongs()
+            .build()
+
+        httpLatencyHistogram = meter.histogramBuilder("http_request_duration_ms")
+            .setDescription("HTTP request duration in milliseconds")
+            .setUnit("ms")
+            .ofLongs()
+            .build()
+
         // Initialize collectors
         initCollectors(application)
 
@@ -384,29 +404,73 @@ object TelemetryManager : TelemetryService {
             }
 
             override fun onActivityStarted(activity: Activity) {
+                val screenName = activity.javaClass.simpleName
                 activitiesStarted++
+
+                // Track screen load start time
+                screenStartTimes[screenName] = System.currentTimeMillis()
+
                 if (autoInstrumentActivities) {
                     currentSpan =
-                        tracer.spanBuilder("ActivityStarted:${activity.javaClass.simpleName}")
+                        tracer.spanBuilder("ActivityStarted:$screenName")
                             .startSpan()
                     currentSpan?.makeCurrent()
                 }
             }
 
             override fun onActivityResumed(activity: Activity) {
-                currentScreenName = activity.javaClass.simpleName
+                val screenName = activity.javaClass.simpleName
+                currentScreenName = screenName
+
+                // Record screen load time
+                val startTime = screenStartTimes.remove(screenName)
+                if (startTime != null) {
+                    val loadTimeMs = System.currentTimeMillis() - startTime
+
+                    screenLoadHistogram.record(
+                        loadTimeMs,
+                        Attributes.builder()
+                            .putAll(commonAttributes)
+                            .put("screen.name", screenName)
+                            .put("load.type", "ttfd")  // Time To Full Display
+                            .build()
+                            .toOtelAttributes()
+                    )
+
+                    Log.d("TelemetryManager", "Screen '$screenName' loaded in ${loadTimeMs}ms")
+                }
+
                 // Mark app startup as complete on first activity resume
                 if (!isAppStartupComplete.getAndSet(true)) {
                     firstActivityResumedTimeMs = System.currentTimeMillis()
                     val startupTime = firstActivityResumedTimeMs - appStartTimeMs
+
+                    // Determine startup type based on duration
+                    val startupType = when {
+                        startupTime < 500 -> "hot"    // Very fast, app was in memory
+                        startupTime < 2000 -> "warm"  // Moderate, some initialization
+                        else -> "cold"                 // Slow, full initialization
+                    }
+
+                    // Record startup latency as histogram
+                    recordLatency(
+                        name = "app.startup",
+                        durationMs = startupTime,
+                        attrs = Attributes.builder()
+                            .put("startup.type", startupType)
+                            .build()
+                    )
+
                     log(
                         TelemetryService.LogLevel.INFO,
                         "App startup completed",
                         Attributes.builder()
                             .put("startup.time.ms", startupTime)
-                            .put("startup.type", "cold")
+                            .put("startup.type", startupType)
                             .build()
                     )
+
+                    Log.i("TelemetryManager", "App startup: ${startupTime}ms (type: $startupType)")
                 }
             }
 
@@ -636,6 +700,35 @@ object TelemetryManager : TelemetryService {
         eventCounter.add(amount, mergedAttrs.toOtelAttributes())
     }
 
+    override fun recordLatency(name: String, durationMs: Long, attrs: Attributes) {
+        val mergedAttrs = Attributes.builder().putAll(commonAttributes).putAll(attrs).build()
+        val otelAttrs = mergedAttrs.toOtelAttributes()
+
+        Log.d(
+            "TelemetryManager",
+            "recordLatency called. Name: $name, Duration: ${durationMs}ms, Attributes: $otelAttrs"
+        )
+
+        // Use the appropriate histogram based on name prefix
+        when {
+            name.startsWith("screen.load") || name == "screen_load" -> {
+                screenLoadHistogram.record(durationMs, otelAttrs)
+            }
+            name.startsWith("http.request") || name.startsWith("network.") -> {
+                httpLatencyHistogram.record(durationMs, otelAttrs)
+            }
+            else -> {
+                // For custom metrics like "app.startup" or "db.query", create dynamic histogram
+                val histogram = meter.histogramBuilder(name.replace(".", "_") + "_duration_ms")
+                    .setDescription("Duration for $name in milliseconds")
+                    .setUnit("ms")
+                    .ofLongs()
+                    .build()
+                histogram.record(durationMs, otelAttrs)
+            }
+        }
+    }
+
     // ==================== Network Monitoring ====================
 
     /**
@@ -662,6 +755,7 @@ object TelemetryManager : TelemetryService {
         return OkHttpTelemetryInterceptor(
             tracer = tracer,
             requestCounter = requestCounter,
+            httpLatencyHistogram = httpLatencyHistogram,
             getCommonAttributes = ::getCommonAttributes
         )
     }
